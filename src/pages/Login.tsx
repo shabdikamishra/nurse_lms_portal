@@ -63,25 +63,6 @@ export default function Login() {
               compliance, certifications, and professional development for nursing staff.
             </p>
           </div>
-
-          <div className="mt-12 grid grid-cols-2 gap-6">
-            <div className="bg-primary-foreground/10 backdrop-blur-sm rounded-lg p-4">
-              <p className="text-3xl font-bold">500+</p>
-              <p className="text-sm text-primary-foreground/80">Training Modules</p>
-            </div>
-            <div className="bg-primary-foreground/10 backdrop-blur-sm rounded-lg p-4">
-              <p className="text-3xl font-bold">50k+</p>
-              <p className="text-sm text-primary-foreground/80">Nurses Trained</p>
-            </div>
-            <div className="bg-primary-foreground/10 backdrop-blur-sm rounded-lg p-4">
-              <p className="text-3xl font-bold">98%</p>
-              <p className="text-sm text-primary-foreground/80">Compliance Rate</p>
-            </div>
-            <div className="bg-primary-foreground/10 backdrop-blur-sm rounded-lg p-4">
-              <p className="text-3xl font-bold">200+</p>
-              <p className="text-sm text-primary-foreground/80">Partner Hospitals</p>
-            </div>
-          </div>
         </div>
       </div>
 

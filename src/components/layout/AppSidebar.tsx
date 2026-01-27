@@ -31,11 +31,13 @@ const navItems: NavItem[] = [
   { title: 'Assigned Modules', href: '/modules', icon: BookOpen, roles: ['nurse'] },
   { title: 'Live Classes', href: '/live-classes', icon: Video, roles: ['nurse'] },
   { title: 'Assessments', href: '/assessments', icon: ClipboardCheck, roles: ['nurse'] },
-  { title: 'Certifications', href: '/certifications', icon: Award, roles: ['nurse', 'admin'] },
+  { title: 'Certifications', href: '/certifications', icon: Award, roles: ['nurse'] },
+  { title: 'Certifications', href: '/admin/certifications', icon: Award, roles: ['admin'] },
   { title: 'Course Library', href: '/course-library', icon: Library, roles: ['admin'] },
   { title: 'Learning Scheduler', href: '/scheduler', icon: Calendar, roles: ['admin'] },
   { title: 'User Management', href: '/users', icon: Users, roles: ['admin'] },
-  { title: 'Reports', href: '/reports', icon: BarChart3, roles: ['nurse', 'admin'] },
+  { title: 'Reports', href: '/reports', icon: BarChart3, roles: ['nurse'] },
+  { title: 'Reports', href: '/admin/reports', icon: BarChart3, roles: ['admin'] },
   { title: 'Support', href: '/support', icon: HelpCircle, roles: ['nurse', 'admin'] },
 ];
 

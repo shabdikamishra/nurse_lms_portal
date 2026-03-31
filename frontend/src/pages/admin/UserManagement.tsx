@@ -40,17 +40,6 @@ import {
 import { Label } from '@/components/ui/label';
 import { useAuth } from '@/contexts/AuthContext';
 
-const demoUsers = [
-  { id: '1', name: 'Sarah Johnson', email: 'sarah.j@hospital.com', department: 'ICU', role: 'Registered Nurse', manager: 'Dr. Michael Chen', status: 'active', completedModules: 18, totalModules: 20 },
-  { id: '2', name: 'James Wilson', email: 'james.w@hospital.com', department: 'Emergency', role: 'Nurse Practitioner', manager: 'Dr. Emily Rodriguez', status: 'active', completedModules: 15, totalModules: 18 },
-  { id: '3', name: 'Maria Garcia', email: 'maria.g@hospital.com', department: 'Pediatrics', role: 'Registered Nurse', manager: 'Dr. Lisa Thompson', status: 'active', completedModules: 12, totalModules: 15 },
-  { id: '4', name: 'Robert Brown', email: 'robert.b@hospital.com', department: 'Surgery', role: 'Clinical Nurse', manager: 'Dr. James Peterson', status: 'deactivated', completedModules: 8, totalModules: 20 },
-  { id: '5', name: 'Jennifer Davis', email: 'jennifer.d@hospital.com', department: 'Oncology', role: 'Registered Nurse', manager: 'Dr. Amanda Foster', status: 'active', completedModules: 14, totalModules: 16 },
-  { id: '6', name: 'Michael Lee', email: 'michael.l@hospital.com', department: 'Cardiology', role: 'Nurse Practitioner', manager: 'Dr. Robert Garcia', status: 'archived', completedModules: 20, totalModules: 20 },
-  { id: '7', name: 'Emily Chen', email: 'emily.c@hospital.com', department: 'ICU', role: 'Clinical Nurse', manager: 'Dr. Michael Chen', status: 'active', completedModules: 16, totalModules: 20 },
-  { id: '8', name: 'David Martinez', email: 'david.m@hospital.com', department: 'Emergency', role: 'Registered Nurse', manager: 'Dr. Emily Rodriguez', status: 'active', completedModules: 10, totalModules: 18 },
-];
-
 const stats = [
   { label: 'Total Users', value: 1247, color: 'text-primary' },
   { label: 'Active', value: 1198, color: 'text-success' },
@@ -58,10 +47,13 @@ const stats = [
   { label: 'Archived', value: 15, color: 'text-muted-foreground' },
 ];
 
-const statusStyles: Record<string, string> = {
-  active: 'badge-success',
-  deactivated: 'badge-warning',
-  archived: 'badge-neutral',
+type AdminUser = {
+  _id: string;
+  email: string;
+  name: string;
+  empId: string;
+  department: string;
+  role: 'nurse' | 'admin';
 };
 
 type NurseFile = {
@@ -76,10 +68,12 @@ type NurseFile = {
 const API_BASE_URL =
   (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:4000';
 
-async function fetchNurseFiles(nurseEmail: string): Promise<NurseFile[]> {
+async function fetchNurseFiles(nurseEmail: string, authHeaders: Record<string, string>): Promise<NurseFile[]> {
   const url = new URL('/api/nurse-files', API_BASE_URL);
   url.searchParams.set('nurseEmail', nurseEmail);
-  const res = await fetch(url.toString());
+  const res = await fetch(url.toString(), {
+    headers: authHeaders,
+  });
   if (!res.ok) {
     throw new Error('Failed to load nurse files');
   }
@@ -87,7 +81,7 @@ async function fetchNurseFiles(nurseEmail: string): Promise<NurseFile[]> {
 }
 
 export default function UserManagement() {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, authHeaders } = useAuth();
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [uploadTitle, setUploadTitle] = useState('');
@@ -96,6 +90,18 @@ export default function UserManagement() {
   const [uploadError, setUploadError] = useState('');
   const [files, setFiles] = useState<NurseFile[]>([]);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+
+  const [isAddUserOpen, setIsAddUserOpen] = useState(false);
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserEmpId, setNewUserEmpId] = useState('');
+  const [newUserDepartment, setNewUserDepartment] = useState('');
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const [createUserError, setCreateUserError] = useState('');
+  const [createUserSuccess, setCreateUserSuccess] = useState('');
+  const [createdDemoPassword, setCreatedDemoPassword] = useState<string | null>(null);
 
   const openUploadDialog = (email: string) => {
     setSelectedEmail(email);
@@ -106,12 +112,98 @@ export default function UserManagement() {
     setIsDialogOpen(true);
   };
 
+  const openAddUserDialog = () => {
+    setNewUserEmail('');
+    setNewUserName('');
+    setNewUserEmpId('');
+    setNewUserDepartment('');
+    setCreateUserError('');
+    setCreateUserSuccess('');
+    setCreatedDemoPassword(null);
+    setIsAddUserOpen(true);
+  };
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreateUserError('');
+    setCreateUserSuccess('');
+    setCreatedDemoPassword(null);
+
+    if (
+      !newUserEmail.trim() ||
+      !newUserName.trim() ||
+      !newUserEmpId.trim() ||
+      !newUserDepartment.trim()
+    ) {
+      setCreateUserError('Please fill in all required fields.');
+      return;
+    }
+
+    setIsCreatingUser(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/users`, {
+        method: 'POST',
+        headers: {
+          ...authHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: newUserEmail.trim(),
+          name: newUserName.trim(),
+          empId: newUserEmpId.trim(),
+          department: newUserDepartment.trim(),
+          role: 'nurse',
+        }),
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(data?.message || 'Failed to create user');
+      }
+
+      setCreateUserSuccess('User created successfully.');
+      if (data?.demoPassword) {
+        setCreatedDemoPassword(data.demoPassword);
+      }
+      if (data?.user) {
+        setUsers((prev) => [data.user as AdminUser, ...prev]);
+      }
+    } catch (err: any) {
+      setCreateUserError(err?.message || 'Failed to create user.');
+    } finally {
+      setIsCreatingUser(false);
+    }
+  };
+
+  useEffect(() => {
+    const loadUsers = async () => {
+      setIsLoadingUsers(true);
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/users`, {
+          headers: authHeaders(),
+        });
+        if (!res.ok) {
+          throw new Error('Failed to load users');
+        }
+        const data = (await res.json()) as AdminUser[];
+        setUsers(data);
+      } catch {
+        // keep table empty on error for now
+      } finally {
+        setIsLoadingUsers(false);
+      }
+    };
+
+    void loadUsers();
+  }, [authHeaders]);
+
   useEffect(() => {
     const loadFiles = async () => {
       if (!selectedEmail) return;
       setIsLoadingFiles(true);
       try {
-        const data = await fetchNurseFiles(selectedEmail);
+        const data = await fetchNurseFiles(selectedEmail, authHeaders());
         setFiles(data);
       } catch {
         // ignore for now, error handled in UI when uploading
@@ -122,7 +214,7 @@ export default function UserManagement() {
     if (isDialogOpen && selectedEmail) {
       void loadFiles();
     }
-  }, [isDialogOpen, selectedEmail]);
+  }, [isDialogOpen, selectedEmail, authHeaders]);
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -144,6 +236,7 @@ export default function UserManagement() {
 
       const res = await fetch(`${API_BASE_URL}/api/nurse-files`, {
         method: 'POST',
+        headers: authHeaders(),
         body: formData,
       });
 
@@ -183,7 +276,7 @@ export default function UserManagement() {
               <Download className="w-4 h-4 mr-2" />
               Export
             </Button>
-            <Button>
+            <Button onClick={openAddUserDialog}>
               <Plus className="w-4 h-4 mr-2" />
               Add User
             </Button>
@@ -260,87 +353,70 @@ export default function UserManagement() {
               <tr>
                 <th>Full Name</th>
                 <th>Email</th>
+                <th>EmpID</th>
                 <th>Department</th>
                 <th>Role</th>
-                <th>Manager</th>
-                <th>Progress</th>
-                <th>Status</th>
                 <th className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {demoUsers.map((user) => (
-                <tr key={user.id}>
-                  <td className="font-medium text-foreground">{user.name}</td>
-                  <td>{user.email}</td>
-                  <td>{user.department}</td>
-                  <td>{user.role}</td>
-                  <td>{user.manager}</td>
-                  <td>
-                    <div className="flex items-center gap-2">
-                      <div className="w-16 h-2 bg-muted rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-primary rounded-full"
-                          style={{ width: `${(user.completedModules / user.totalModules) * 100}%` }}
-                        />
-                      </div>
-                      <span className="text-xs text-muted-foreground">
-                        {user.completedModules}/{user.totalModules}
-                      </span>
-                    </div>
+              {isLoadingUsers ? (
+                <tr>
+                  <td colSpan={6} className="text-center py-6 text-muted-foreground">
+                    Loading users...
                   </td>
-                  <td>
-                    <span className={statusStyles[user.status]}>
-                      {user.status.charAt(0).toUpperCase() + user.status.slice(1)}
-                    </span>
+                </tr>
+              ) : users.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="text-center py-6 text-muted-foreground">
+                    No users found. Use &quot;Add User&quot; to create one.
                   </td>
-                  <td className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <MoreHorizontal className="w-4 h-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem>
-                          <Edit className="w-4 h-4 mr-2" />
-                          Edit Profile
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <BookOpen className="w-4 h-4 mr-2" />
-                          Assign Modules
-                        </DropdownMenuItem>
+                </tr>
+              ) : (
+                users.map((user) => (
+                  <tr key={user._id}>
+                    <td className="font-medium text-foreground">{user.name}</td>
+                    <td>{user.email}</td>
+                    <td>{user.empId}</td>
+                    <td>{user.department}</td>
+                    <td className="capitalize">{user.role}</td>
+                    <td className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <MoreHorizontal className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem>
+                            <Edit className="w-4 h-4 mr-2" />
+                            Edit Profile
+                          </DropdownMenuItem>
+                          <DropdownMenuItem>
+                            <BookOpen className="w-4 h-4 mr-2" />
+                            Assign Modules
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => openUploadDialog(user.email)}>
                             <FileText className="w-4 h-4 mr-2" />
                             Nurse Files (PDF)
                           </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <Mail className="w-4 h-4 mr-2" />
-                          Send Reminder
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem className="text-destructive">
-                          <UserX className="w-4 h-4 mr-2" />
-                          Deactivate
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </td>
-                </tr>
-              ))}
+                          <DropdownMenuItem>
+                            <Mail className="w-4 h-4 mr-2" />
+                            Send Reminder
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem className="text-destructive">
+                            <UserX className="w-4 h-4 mr-2" />
+                            Deactivate
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
-
-          {/* Pagination */}
-          <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
-            <p className="text-sm text-muted-foreground">
-              Showing 1-8 of 1,247 users
-            </p>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" disabled>Previous</Button>
-              <Button variant="outline" size="sm">Next</Button>
-            </div>
-          </div>
         </div>
 
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -436,6 +512,90 @@ export default function UserManagement() {
                 </div>
               )}
             </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Add User Dialog */}
+        <Dialog open={isAddUserOpen} onOpenChange={setIsAddUserOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add New User</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleCreateUser} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="new-user-email">Email</Label>
+                <Input
+                  id="new-user-email"
+                  type="email"
+                  placeholder="nurse@example.com"
+                  value={newUserEmail}
+                  onChange={(e) => setNewUserEmail(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="new-user-name">Full Name</Label>
+                <Input
+                  id="new-user-name"
+                  placeholder="Enter full name"
+                  value={newUserName}
+                  onChange={(e) => setNewUserName(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="new-user-empid">EmpID</Label>
+                <Input
+                  id="new-user-empid"
+                  placeholder="Employee ID"
+                  value={newUserEmpId}
+                  onChange={(e) => setNewUserEmpId(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="new-user-department">Department</Label>
+                <Input
+                  id="new-user-department"
+                  placeholder="e.g., ICU, Emergency"
+                  value={newUserDepartment}
+                  onChange={(e) => setNewUserDepartment(e.target.value)}
+                  required
+                />
+              </div>
+
+              {createUserError && (
+                <p className="text-sm text-destructive">{createUserError}</p>
+              )}
+              {createUserSuccess && (
+                <div className="space-y-1 text-sm">
+                  <p className="text-emerald-600 dark:text-emerald-400">
+                    {createUserSuccess}
+                  </p>
+                  {createdDemoPassword && (
+                    <p className="text-muted-foreground">
+                      Demo password for this user:{' '}
+                      <span className="font-mono font-semibold">
+                        {createdDemoPassword}
+                      </span>
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsAddUserOpen(false)}
+                >
+                  Close
+                </Button>
+                <Button type="submit" disabled={isCreatingUser}>
+                  {isCreatingUser ? 'Creating...' : 'Create User'}
+                </Button>
+              </DialogFooter>
+            </form>
           </DialogContent>
         </Dialog>
       </div>

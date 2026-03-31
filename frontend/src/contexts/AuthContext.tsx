@@ -18,6 +18,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
   isAuthenticated: boolean;
+  authHeaders: () => Record<string, string>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -110,7 +111,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        login,
+        logout,
+        isAuthenticated: !!user,
+        authHeaders: () => (user?.email ? { 'x-user-email': user.email } : {}),
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

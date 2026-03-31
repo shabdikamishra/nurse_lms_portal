@@ -25,6 +25,7 @@ import AdminReports from "./pages/admin/Reports";
 
 // Shared Pages
 import Support from "./pages/Support";
+import ChangePassword from "./pages/ChangePassword";
 
 const queryClient = new QueryClient();
 
@@ -56,6 +57,7 @@ const App = () => (
             
             {/* Shared Routes */}
             <Route path="/support" element={<Support />} />
+            <Route path="/change-password" element={<ChangePassword />} />
             
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />

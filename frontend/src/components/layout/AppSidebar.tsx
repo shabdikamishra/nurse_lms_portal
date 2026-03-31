@@ -1,17 +1,18 @@
-import { 
-  LayoutDashboard, 
-  BookOpen, 
-  Video, 
-  ClipboardCheck, 
-  Award, 
-  Library, 
-  Calendar, 
-  Users, 
-  BarChart3, 
-  HelpCircle, 
+import {
+  LayoutDashboard,
+  BookOpen,
+  Video,
+  ClipboardCheck,
+  Award,
+  Library,
+  Calendar,
+  Users,
+  BarChart3,
+  HelpCircle,
   LogOut,
   Stethoscope,
-  ChevronLeft
+  ChevronLeft,
+  Lock,
 } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -39,6 +40,7 @@ const navItems: NavItem[] = [
   { title: 'Reports', href: '/reports', icon: BarChart3, roles: ['nurse'] },
   { title: 'Reports', href: '/admin/reports', icon: BarChart3, roles: ['admin'] },
   { title: 'Support', href: '/support', icon: HelpCircle, roles: ['nurse', 'admin'] },
+  { title: 'Change Password', href: '/change-password', icon: Lock, roles: ['nurse', 'admin'] },
 ];
 
 export function AppSidebar() {

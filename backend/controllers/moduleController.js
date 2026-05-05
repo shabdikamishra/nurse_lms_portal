@@ -47,10 +47,11 @@ export async function createModule(req, res) {
 
     const contentFile = req.file
       ? {
-          filename: req.file.filename,
+          filename: req.file.originalname,
           originalName: req.file.originalname,
           mimeType: req.file.mimetype,
           size: req.file.size,
+          data: req.file.buffer,
         }
       : undefined;
 
@@ -94,10 +95,11 @@ export async function updateModule(req, res) {
 
     if (req.file) {
       update.contentFile = {
-        filename: req.file.filename,
+        filename: req.file.originalname,
         originalName: req.file.originalname,
         mimeType: req.file.mimetype,
         size: req.file.size,
+        data: req.file.buffer,
       };
     }
 

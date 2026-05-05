@@ -1,5 +1,4 @@
 import { Clock, User, ChevronRight } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
 export type ModuleStatus = 'not-started' | 'in-progress' | 'completed';
@@ -11,6 +10,7 @@ interface ModuleCardProps {
   status: ModuleStatus;
   duration?: string;
   progress?: number;
+  onOpen?: () => void;
 }
 
 const statusConfig: Record<ModuleStatus, { label: string; className: string }> = {
@@ -19,7 +19,7 @@ const statusConfig: Record<ModuleStatus, { label: string; className: string }> =
   'completed': { label: 'Completed', className: 'badge-success' },
 };
 
-export function ModuleCard({ title, author, thumbnail, status, duration, progress }: ModuleCardProps) {
+export function ModuleCard({ title, author, thumbnail, status, duration, progress, onOpen }: ModuleCardProps) {
   const { label, className } = statusConfig[status];
 
   return (
@@ -28,7 +28,7 @@ export function ModuleCard({ title, author, thumbnail, status, duration, progres
         <img 
           src={thumbnail} 
           alt={title}
-          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+          className="w-full h-full object-contain bg-gradient-to-b from-info/5 to-muted group-hover:scale-105 transition-transform duration-300"
         />
       </div>
       
@@ -37,7 +37,9 @@ export function ModuleCard({ title, author, thumbnail, status, duration, progres
           <h3 className="font-semibold text-foreground line-clamp-2 group-hover:text-primary transition-colors">
             {title}
           </h3>
-          <span className={className}>{label}</span>
+          <span className={className}>
+            {status === 'completed' ? '🟢' : status === 'in-progress' ? '🔵' : '⚪'} {label}
+          </span>
         </div>
 
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
@@ -67,8 +69,13 @@ export function ModuleCard({ title, author, thumbnail, status, duration, progres
 
         <Button 
           variant={status === 'completed' ? 'outline' : 'default'} 
-          className="w-full mt-2"
+          className={`w-full mt-2 transition-colors ${
+            status === 'completed'
+              ? 'border-success/30 text-success hover:bg-success/10'
+              : 'bg-primary hover:bg-primary/90'
+          }`}
           size="sm"
+          onClick={onOpen}
         >
           {status === 'not-started' && 'Start Module'}
           {status === 'in-progress' && 'Continue Learning'}

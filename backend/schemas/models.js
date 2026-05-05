@@ -54,6 +54,7 @@ const moduleSchema = new mongoose.Schema(
       originalName: { type: String, default: "" },
       mimeType: { type: String, default: "" },
       size: { type: Number, default: 0 },
+      data: { type: Buffer, default: null },
     },
   },
   { timestamps: true }
@@ -74,6 +75,7 @@ const lessonSchema = new mongoose.Schema(
     originalName: { type: String, required: true },
     mimeType: { type: String, required: true },
     size: { type: Number, required: true },
+    data: { type: Buffer, required: true },
     uploadedBy: { type: String },
   },
   { timestamps: true }
@@ -92,6 +94,7 @@ const sopSchema = new mongoose.Schema(
     originalName: { type: String, required: true },
     mimeType: { type: String, required: true },
     size: { type: Number, required: true },
+    data: { type: Buffer, required: true },
     uploadedBy: { type: String },
   },
   { timestamps: true }
@@ -149,6 +152,7 @@ const nurseFileSchema = new mongoose.Schema(
     originalName: { type: String, required: true },
     mimeType: { type: String, required: true },
     size: { type: Number, required: true },
+    data: { type: Buffer, required: true },
     uploadedBy: { type: String },
   },
   { timestamps: true }
@@ -200,6 +204,44 @@ const quizAttemptSchema = new mongoose.Schema(
 );
 quizAttemptSchema.index({ userId: 1, moduleId: 1 });
 
+const moduleAssignmentSchema = new mongoose.Schema(
+  {
+    nurseId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+    courseId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Course",
+      required: true,
+      index: true,
+    },
+    moduleId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Module",
+      required: true,
+      index: true,
+    },
+    assignedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    assignedAt: { type: Date, default: Date.now },
+    dueDate: { type: Date, default: null },
+    status: {
+      type: String,
+      enum: ["NOT_STARTED", "IN_PROGRESS", "COMPLETED"],
+      default: "NOT_STARTED",
+      index: true,
+    },
+  },
+  { timestamps: true }
+);
+moduleAssignmentSchema.index({ nurseId: 1, moduleId: 1 }, { unique: true });
+
 export const User = mongoose.model("User", userSchema);
 export const Department = mongoose.model("Department", departmentSchema);
 export const Course = mongoose.model("Course", courseSchema);
@@ -211,3 +253,7 @@ export const Progress = mongoose.model("Progress", progressSchema);
 export const NurseFile = mongoose.model("NurseFile", nurseFileSchema);
 export const Question = mongoose.model("Question", questionSchema);
 export const QuizAttempt = mongoose.model("QuizAttempt", quizAttemptSchema);
+export const ModuleAssignment = mongoose.model(
+  "ModuleAssignment",
+  moduleAssignmentSchema
+);

@@ -126,6 +126,16 @@ export default function AdminDashboard() {
           />
         </div>
 
+        <div className="healthcare-card flex flex-wrap gap-2">
+          <span className="content-tag content-tag-lesson">
+            Assigned Modules: {isLoading ? "..." : String(summary?.modulesCount ?? 0)}
+          </span>
+          <span className="content-tag content-tag-quiz">
+            Completed This Month: {isLoading ? "..." : String(summary?.completedThisMonth ?? 0)}
+          </span>
+          <span className="content-tag content-tag-sop">Important Alerts: {isLoading ? "..." : String(summary?.nonCompliantCount ?? 0)}</span>
+        </div>
+
         {/* Recent Activity */}
         <div className="healthcare-card">
           <div className="flex items-center justify-between mb-4">

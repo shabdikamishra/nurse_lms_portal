@@ -1,48 +1,45 @@
-import { useEffect, useMemo, useState } from 'react';
-import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { ModuleCard } from '@/components/nurse/ModuleCard';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { 
-  Search, 
-  Filter, 
-  BookOpen, 
-  Clock, 
-  CheckCircle2,
-  PlayCircle
-} from 'lucide-react';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { ModuleCard } from "@/components/nurse/ModuleCard";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Search, Filter, BookOpen, Clock, CheckCircle2, PlayCircle } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useAuth } from "@/contexts/AuthContext";
 
 const API_BASE_URL =
-  (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:4000';
+  (import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:4000";
+const NURSE_THUMBNAIL =
+  "/nurse-ui.png";
 
 const stats = [
-  { label: 'Total Modules', value: 18, icon: BookOpen, color: 'text-primary' },
-  { label: 'In Progress', value: 4, icon: PlayCircle, color: 'text-warning' },
-  { label: 'Completed', value: 12, icon: CheckCircle2, color: 'text-success' },
-  { label: 'Hours Remaining', value: '24h', icon: Clock, color: 'text-muted-foreground' },
+  { label: "Total Modules", value: 0, icon: BookOpen, color: "text-primary" },
+  { label: "In Progress", value: 0, icon: PlayCircle, color: "text-warning" },
+  { label: "Completed", value: 0, icon: CheckCircle2, color: "text-success" },
+  { label: "Hours Remaining", value: "-", icon: Clock, color: "text-muted-foreground" },
 ];
 
 export default function AssignedModules() {
+  const navigate = useNavigate();
   const { authHeaders } = useAuth();
   const [modules, setModules] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<string>('all');
-  const [departmentId, setDepartmentId] = useState<string>('all');
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState<string>("all");
+  const [departmentId, setDepartmentId] = useState<string>("all");
+
+  const uiStatus = (raw: string): 'not-started' | 'in-progress' | 'completed' => {
+    if (raw === "IN_PROGRESS") return "in-progress";
+    if (raw === "COMPLETED") return "completed";
+    return "not-started";
+  };
 
   useEffect(() => {
     const load = async () => {
       setIsLoading(true);
       try {
-        const res = await fetch(`${API_BASE_URL}/api/me/modules`, {
+        const res = await fetch(`${API_BASE_URL}/api/assignments/my-modules`, {
           headers: authHeaders(),
         });
         if (!res.ok) throw new Error('Failed to load modules');
@@ -55,7 +52,7 @@ export default function AssignedModules() {
       }
     };
     void load();
-  }, []);
+  }, [authHeaders]);
 
   const departments = useMemo(() => {
     const map = new Map<string, { _id: string; name: string }>();
@@ -72,21 +69,21 @@ export default function AssignedModules() {
     return modules.filter((m) => {
       const matchesSearch =
         !q ||
-        String(m.title || '').toLowerCase().includes(q) ||
-        String(m.course?.title || '').toLowerCase().includes(q) ||
-        String(m.department?.name || '').toLowerCase().includes(q);
+        String(m.module?.title || "").toLowerCase().includes(q) ||
+        String(m.course?.title || "").toLowerCase().includes(q) ||
+        String(m.department?.name || "").toLowerCase().includes(q);
       const matchesStatus =
-        status === 'all' ? true : m.progress?.status === status;
+        status === "all" ? true : uiStatus(m.status) === status;
       const matchesDept =
-        departmentId === 'all' ? true : m.department?._id === departmentId;
+        departmentId === "all" ? true : m.department?._id === departmentId;
       return matchesSearch && matchesStatus && matchesDept;
     });
   }, [modules, search, status, departmentId]);
 
   const computedStats = useMemo(() => {
     const total = modules.length;
-    const inProgress = modules.filter((m) => m.progress?.status === 'in-progress').length;
-    const completed = modules.filter((m) => m.progress?.status === 'completed').length;
+    const inProgress = modules.filter((m) => m.status === "IN_PROGRESS").length;
+    const completed = modules.filter((m) => m.status === "COMPLETED").length;
     return { total, inProgress, completed };
   }, [modules]);
 
@@ -163,7 +160,7 @@ export default function AssignedModules() {
                 ))}
               </SelectContent>
             </Select>
-            <Button variant="outline">
+            <Button variant="outline" className="hover:bg-muted">
               <Filter className="w-4 h-4 mr-2" />
               More Filters
             </Button>
@@ -180,11 +177,11 @@ export default function AssignedModules() {
             filteredModules.map((module) => (
               <ModuleCard
                 key={module._id}
-                title={module.title}
-                author={module.course?.title || 'Course'}
-                thumbnail="https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?w=400&h=225&fit=crop"
-                status={module.progress?.status}
-                progress={module.progress?.percent}
+                title={module.module?.title}
+                author={module.course?.title || "Course"}
+                thumbnail={NURSE_THUMBNAIL}
+                status={uiStatus(module.status)}
+                onOpen={() => navigate(`/modules/${module._id}`)}
               />
             ))
           )}

@@ -197,6 +197,11 @@ export default function QuizModule() {
   }
 
   const currentQuestion = quizState.questions[currentQuestionIndex];
+  const currentOptions =
+    currentQuestion.type === 'true-false' &&
+    (!Array.isArray(currentQuestion.options) || currentQuestion.options.length < 2)
+      ? ['True', 'False']
+      : currentQuestion.options;
   const selectedAnswer = answers[currentQuestion._id];
   const currentFeedback = answerFeedbackByQuestion[currentQuestion._id];
   const answeredCount = Object.keys(answers).length;
@@ -362,6 +367,11 @@ export default function QuizModule() {
                 (a) => a.questionId === question._id
               );
               const isCorrect = result?.isCorrect;
+              const options =
+                question.type === 'true-false' &&
+                (!Array.isArray(question.options) || question.options.length < 2)
+                  ? ['True', 'False']
+                  : question.options;
 
               return (
                 <div
@@ -393,7 +403,7 @@ export default function QuizModule() {
 
                   {/* Options Review */}
                   <div className="space-y-2">
-                    {question.options.map((option) => {
+                    {options.map((option) => {
                       const isUserSelected = userAnswer === option;
                       return (
                         <div
@@ -508,7 +518,7 @@ export default function QuizModule() {
 
           {/* Options */}
           <div className="space-y-3">
-            {currentQuestion.options.map((option) => (
+            {currentOptions.map((option) => (
               <button
                 key={option}
                 onClick={() => void handleSelectAnswer(option)}
@@ -548,7 +558,7 @@ export default function QuizModule() {
               <AlertDescription className="text-sm">Checking answer...</AlertDescription>
             </Alert>
           )}
-          {!selectedAnswer && !isCheckingAnswer && (
+            {!selectedAnswer && !isCheckingAnswer && (
             <Alert className="border-amber-500 bg-amber-50 dark:bg-amber-950">
               <AlertCircle className="h-4 w-4 text-amber-600" />
               <AlertDescription className="text-amber-600 dark:text-amber-400 text-sm">

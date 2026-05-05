@@ -16,6 +16,7 @@ import Assessments from "./pages/nurse/Assessments";
 import NurseCertifications from "./pages/nurse/Certifications";
 import NurseReports from "./pages/nurse/Reports";
 import QuizModule from "./pages/nurse/QuizModule";
+import NurseModuleDetail from "./pages/nurse/ModuleDetail";
 
 // Admin Pages
 import AdminCertifications from "./pages/admin/Certifications";
@@ -24,6 +25,7 @@ import ModulesPage from "./pages/admin/ModulesPage";
 import LearningScheduler from "./pages/admin/LearningScheduler";
 import UserManagement from "./pages/admin/UserManagement";
 import AdminReports from "./pages/admin/Reports";
+import AssignModulesPage from "./pages/admin/AssignModulesPage";
 
 // Shared Pages
 import Support from "./pages/Support";
@@ -45,6 +47,7 @@ const App = () => (
             
             {/* Nurse Routes */}
             <Route path="/modules" element={<AssignedModules />} />
+            <Route path="/modules/:assignmentId" element={<NurseModuleDetail />} />
             <Route path="/live-classes" element={<LiveClasses />} />
             <Route path="/assessments" element={<Assessments />} />
             <Route path="/certifications" element={<NurseCertifications />} />
@@ -58,6 +61,7 @@ const App = () => (
             <Route path="/scheduler" element={<LearningScheduler />} />
             <Route path="/users" element={<UserManagement />} />
             <Route path="/admin/reports" element={<AdminReports />} />
+            <Route path="/admin/assign-modules" element={<AssignModulesPage />} />
             
             {/* Shared Routes */}
             <Route path="/support" element={<Support />} />

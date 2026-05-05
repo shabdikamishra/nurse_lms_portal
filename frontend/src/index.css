@@ -214,6 +214,50 @@
   .badge-neutral {
     @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground;
   }
+
+  .status-completed {
+    @apply text-success bg-success/10 border border-success/20;
+  }
+
+  .status-inprogress {
+    @apply text-info bg-info/10 border border-info/20;
+  }
+
+  .status-notstarted {
+    @apply text-muted-foreground bg-muted border border-border;
+  }
+
+  .status-failed {
+    @apply text-destructive bg-destructive/10 border border-destructive/20;
+  }
+
+  .status-alert {
+    @apply text-warning bg-warning/10 border border-warning/20;
+  }
+
+  .selected-card {
+    @apply border-primary/40 bg-primary/5;
+  }
+
+  .content-tag {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+
+  .content-tag-lesson {
+    @apply text-info bg-info/10;
+  }
+
+  .content-tag-video {
+    @apply text-purple-600 bg-purple-100 dark:text-purple-300 dark:bg-purple-950;
+  }
+
+  .content-tag-sop {
+    @apply text-warning bg-warning/10;
+  }
+
+  .content-tag-quiz {
+    @apply text-success bg-success/10;
+  }
 }
 
 @layer utilities {

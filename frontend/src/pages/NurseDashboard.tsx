@@ -165,6 +165,17 @@ export default function NurseDashboard() {
           />
         </div>
 
+        <div className="healthcare-card flex flex-wrap gap-2">
+          <span className="content-tag content-tag-lesson">
+            Assigned Modules: {String(summary?.totalModules ?? 0)}
+          </span>
+          <span className="content-tag content-tag-quiz">
+            Completed Modules: {String(summary?.completedModules ?? 0)}
+          </span>
+          <span className="content-tag content-tag-video">🎥 Videos</span>
+          <span className="content-tag content-tag-sop">📘 SOP</span>
+        </div>
+
         {/* Charts Section */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Learning Hours Trend */}

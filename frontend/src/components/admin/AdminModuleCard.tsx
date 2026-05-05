@@ -364,14 +364,17 @@ export default function AdminModuleCard({
       {/* Header */}
       <div>
         <h2 className="text-xl font-semibold text-foreground">{module.title}</h2>
-        <div className="flex gap-2 mt-2 text-sm text-muted-foreground">
-          <span className="flex items-center gap-1">
-            📄 {lessons.length} Lesson{lessons.length !== 1 ? 's' : ''}
+        <div className="flex flex-wrap gap-2 mt-2 text-sm">
+          <span className="content-tag content-tag-lesson">
+            📄 {lessons.filter((l) => l.type === 'pdf').length} PDFs uploaded
           </span>
-          <span className="flex items-center gap-1">
-            📘 {sops.length} SOP{sops.length !== 1 ? 's' : ''}
+          <span className="content-tag content-tag-video">
+            🎥 {lessons.filter((l) => l.type === 'video').length} Video{lessons.filter((l) => l.type === 'video').length !== 1 ? 's' : ''} added
           </span>
-          <span className="flex items-center gap-1">
+          <span className="content-tag content-tag-sop">
+            📘 {sops.length > 0 ? 'SOP available' : 'No SOP yet'}
+          </span>
+          <span className="content-tag content-tag-quiz">
             📝 {questions.length} Question{questions.length !== 1 ? 's' : ''}
           </span>
         </div>

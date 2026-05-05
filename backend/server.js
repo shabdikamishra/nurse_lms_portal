@@ -3,10 +3,7 @@ import cors from "cors";
 import morgan from "morgan";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
-import path from "path";
-import fs from "fs";
 import multer from "multer";
-import crypto from "crypto";
 import { buildModuleRoutes } from "./routes/moduleRoutes.js";
 import {
   User,
@@ -20,6 +17,7 @@ import {
   NurseFile,
   Question,
   QuizAttempt,
+  ModuleAssignment,
 } from "./schemas/models.js";
 
 dotenv.config();
@@ -29,46 +27,14 @@ const PORT = process.env.PORT || 4000;
 const MONGO_URI =
   process.env.MONGO_URI || "mongodb://127.0.0.1:27017/nurse_lms_files";
 
-// Ensure uploads directory exists using fs module
-const uploadsDir = path.join(process.cwd(), "backend", "uploads");
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-const nurseFilesDir = path.join(uploadsDir, "nurse-files");
-const lessonsDir = path.join(uploadsDir, "lessons");
-const sopsDir = path.join(uploadsDir, "sops");
-const moduleContentsDir = path.join(uploadsDir, "module-contents");
-for (const dir of [nurseFilesDir, lessonsDir, sopsDir, moduleContentsDir]) {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
-
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || "100");
 const MAX_UPLOAD_BYTES = Number.isFinite(MAX_UPLOAD_MB)
   ? MAX_UPLOAD_MB * 1024 * 1024
   : 100 * 1024 * 1024;
-
-function makeSafeFilename(originalName) {
-  const safeOriginal = String(originalName || "file").replace(/\s+/g, "_");
-  const rand = crypto.randomBytes(8).toString("hex");
-  return `${Date.now()}_${rand}_${safeOriginal}`;
-}
-
-function diskStorage(destinationDir) {
-  return multer.diskStorage({
-    destination: function (req, file, cb) {
-      cb(null, destinationDir);
-    },
-    filename: function (req, file, cb) {
-      cb(null, makeSafeFilename(file.originalname));
-    },
-  });
-}
+const inMemoryStorage = multer.memoryStorage();
 
 const nursePdfUpload = multer({
-  storage: diskStorage(nurseFilesDir),
+  storage: inMemoryStorage,
   limits: { fileSize: MAX_UPLOAD_BYTES },
   fileFilter: (req, file, cb) => {
     if (file.mimetype !== "application/pdf") {
@@ -79,7 +45,7 @@ const nursePdfUpload = multer({
 });
 
 const lessonUpload = multer({
-  storage: diskStorage(lessonsDir),
+  storage: inMemoryStorage,
   limits: { fileSize: MAX_UPLOAD_BYTES },
   fileFilter: (req, file, cb) => {
     const ok =
@@ -96,7 +62,7 @@ const lessonUpload = multer({
 });
 
 const sopPdfUpload = multer({
-  storage: diskStorage(sopsDir),
+  storage: inMemoryStorage,
   limits: { fileSize: MAX_UPLOAD_BYTES },
   fileFilter: (req, file, cb) => {
     if (file.mimetype !== "application/pdf") {
@@ -107,7 +73,7 @@ const sopPdfUpload = multer({
 });
 
 const moduleContentUpload = multer({
-  storage: diskStorage(moduleContentsDir),
+  storage: inMemoryStorage,
   limits: { fileSize: MAX_UPLOAD_BYTES },
   fileFilter: (req, file, cb) => {
     const mime = String(file.mimetype || "");
@@ -207,9 +173,20 @@ async function getCourseIdForModule(moduleId) {
 async function canAccessModuleContent(reqUser, moduleId) {
   if (!reqUser) return false;
   if (reqUser.role === "admin") return true;
+  const assigned = await ModuleAssignment.exists({
+    nurseId: reqUser._id,
+    moduleId,
+  });
+  if (assigned) return true;
   const courseId = await getCourseIdForModule(moduleId);
   if (!courseId) return false;
   return isEnrolledInCourse(reqUser._id, courseId);
+}
+
+function mapAssignmentStatusToProgress(status) {
+  if (status === "COMPLETED") return { status: "completed", percent: 100 };
+  if (status === "IN_PROGRESS") return { status: "in-progress", percent: 50 };
+  return { status: "not-started", percent: 0 };
 }
 
 // Auth login
@@ -613,21 +590,21 @@ app.get("/api/admin/dashboard-summary", requireAdmin(), async (req, res) => {
 app.get("/api/nurse/dashboard-summary", requireAuth(), async (req, res) => {
   try {
     const current = req.user;
-    const enrollments = await Enrollment.find({ userId: current._id })
-      .select({ courseId: 1 })
-      .lean()
-      .exec();
-    const courseIds = enrollments.map((e) => e.courseId);
-
-    const [modules, progressDocs, attempts] = await Promise.all([
-      Module.find({ courseId: { $in: courseIds } }).select({ _id: 1 }).lean().exec(),
-      Progress.find({ userId: current._id }).lean().exec(),
+    const [assignments, attempts] = await Promise.all([
+      ModuleAssignment.find({ nurseId: current._id })
+        .select({ moduleId: 1, status: 1 })
+        .lean()
+        .exec(),
       QuizAttempt.find({ userId: current._id }).lean().exec(),
     ]);
 
-    const totalModules = modules.length;
-    const completedModules = progressDocs.filter((p) => p.status === "completed").length;
-    const inProgressModules = progressDocs.filter((p) => p.status === "in-progress").length;
+    const totalModules = assignments.length;
+    const completedModules = assignments.filter(
+      (a) => a.status === "COMPLETED"
+    ).length;
+    const inProgressModules = assignments.filter(
+      (a) => a.status === "IN_PROGRESS"
+    ).length;
 
     const avgQuizScore = attempts.length
       ? Math.round(
@@ -946,13 +923,8 @@ app.get("/api/modules/:id/content/download", requireAuth(), async (req, res) => 
     }
 
     const filename = mod.contentFile?.filename || "";
-    if (!filename) {
+    if (!filename || !mod.contentFile?.data) {
       return res.status(404).json({ message: "No course content uploaded" });
-    }
-
-    const filePath = path.join(moduleContentsDir, filename);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ message: "File not found" });
     }
 
     res.setHeader(
@@ -963,7 +935,7 @@ app.get("/api/modules/:id/content/download", requireAuth(), async (req, res) => 
       "Content-Disposition",
       `inline; filename="${mod.contentFile?.originalName || "module-content"}"`
     );
-    return res.sendFile(filePath);
+    return res.send(mod.contentFile.data);
   } catch (err) {
     console.error("Error downloading module content", err);
     return res.status(500).json({ message: "Failed to download module content" });
@@ -1051,10 +1023,11 @@ app.post(
         moduleId: req.params.moduleId,
         title: trimmedTitle,
         type,
-        filename: req.file.filename,
+        filename: req.file.originalname,
         originalName: req.file.originalname,
         mimeType: req.file.mimetype,
         size: req.file.size,
+        data: req.file.buffer,
         uploadedBy: req.user?.email || null,
       });
 
@@ -1078,11 +1051,7 @@ app.delete("/api/lessons/:id", requireAdmin(), async (req, res) => {
   try {
     const lesson = await Lesson.findById(req.params.id).lean().exec();
     if (!lesson) return res.status(404).json({ message: "Lesson not found" });
-    const filePath = path.join(lessonsDir, lesson.filename);
     await Lesson.deleteOne({ _id: lesson._id });
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
     res.json({ message: "Lesson deleted" });
   } catch (err) {
     console.error("Error deleting lesson", err);
@@ -1098,16 +1067,13 @@ app.get("/api/lessons/:id/download", requireAuth(), async (req, res) => {
     if (!allowed) {
       return res.status(403).json({ message: "Forbidden" });
     }
-    const filePath = path.join(lessonsDir, lesson.filename);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ message: "File not found" });
-    }
+    if (!lesson.data) return res.status(404).json({ message: "File not found" });
     res.setHeader("Content-Type", lesson.mimeType);
     res.setHeader(
       "Content-Disposition",
       `inline; filename="${lesson.originalName}"`
     );
-    return res.sendFile(filePath);
+    return res.send(lesson.data);
   } catch (err) {
     console.error("Error downloading lesson", err);
     res.status(500).json({ message: "Failed to download lesson" });
@@ -1122,36 +1088,35 @@ app.get("/api/lessons/:id/stream", requireAuth(), async (req, res) => {
     if (!allowed) {
       return res.status(403).json({ message: "Forbidden" });
     }
-    const filePath = path.join(lessonsDir, lesson.filename);
-    if (!fs.existsSync(filePath)) {
+    if (!lesson.data) {
       return res.status(404).json({ message: "File not found" });
     }
-
-    const stat = fs.statSync(filePath);
+    const dataBuffer = Buffer.from(lesson.data.buffer || lesson.data);
+    const size = dataBuffer.length;
     const range = req.headers.range;
     const contentType = lesson.mimeType || "video/mp4";
 
     if (!range) {
       res.writeHead(200, {
-        "Content-Length": stat.size,
+        "Content-Length": size,
         "Content-Type": contentType,
       });
-      fs.createReadStream(filePath).pipe(res);
+      res.end(dataBuffer);
       return;
     }
 
     const parts = String(range).replace(/bytes=/, "").split("-");
     const start = parseInt(parts[0], 10);
-    const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+    const end = parts[1] ? parseInt(parts[1], 10) : size - 1;
     const chunkSize = end - start + 1;
 
     res.writeHead(206, {
-      "Content-Range": `bytes ${start}-${end}/${stat.size}`,
+      "Content-Range": `bytes ${start}-${end}/${size}`,
       "Accept-Ranges": "bytes",
       "Content-Length": chunkSize,
       "Content-Type": contentType,
     });
-    fs.createReadStream(filePath, { start, end }).pipe(res);
+    res.end(dataBuffer.subarray(start, end + 1));
   } catch (err) {
     console.error("Error streaming lesson", err);
     res.status(500).json({ message: "Failed to stream lesson" });
@@ -1202,10 +1167,11 @@ app.post(
       const created = await SOP.create({
         moduleId: req.params.moduleId,
         title: trimmedTitle,
-        filename: req.file.filename,
+        filename: req.file.originalname,
         originalName: req.file.originalname,
         mimeType: req.file.mimetype,
         size: req.file.size,
+        data: req.file.buffer,
         uploadedBy: req.user?.email || null,
       });
 
@@ -1226,11 +1192,7 @@ app.delete("/api/sops/:id", requireAdmin(), async (req, res) => {
   try {
     const sop = await SOP.findById(req.params.id).lean().exec();
     if (!sop) return res.status(404).json({ message: "SOP not found" });
-    const filePath = path.join(sopsDir, sop.filename);
     await SOP.deleteOne({ _id: sop._id });
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
     res.json({ message: "SOP deleted" });
   } catch (err) {
     console.error("Error deleting sop", err);
@@ -1246,16 +1208,13 @@ app.get("/api/sops/:id/download", requireAuth(), async (req, res) => {
     if (!allowed) {
       return res.status(403).json({ message: "Forbidden" });
     }
-    const filePath = path.join(sopsDir, sop.filename);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ message: "File not found" });
-    }
+    if (!sop.data) return res.status(404).json({ message: "File not found" });
     res.setHeader("Content-Type", sop.mimeType);
     res.setHeader(
       "Content-Disposition",
       `inline; filename="${sop.originalName}"`
     );
-    return res.sendFile(filePath);
+    return res.send(sop.data);
   } catch (err) {
     console.error("Error downloading sop", err);
     res.status(500).json({ message: "Failed to download SOP" });
@@ -1292,6 +1251,238 @@ app.post("/api/admin/enrollments", requireAdmin(), async (req, res) => {
   }
 });
 
+// Admin - assign modules (or full course) to nurses
+app.post("/api/assignments", requireAdmin(), async (req, res) => {
+  try {
+    const { nurseIds, courseId, moduleIds, dueDate } = req.body || {};
+    if (!Array.isArray(nurseIds) || nurseIds.length === 0 || !courseId) {
+      return res
+        .status(400)
+        .json({ message: "nurseIds[] and courseId are required" });
+    }
+
+    const course = await Course.findById(courseId).lean().exec();
+    if (!course) {
+      return res.status(400).json({ message: "Invalid courseId" });
+    }
+
+    const nurses = await User.find({
+      _id: { $in: nurseIds },
+      role: "nurse",
+    })
+      .select({ _id: 1 })
+      .lean()
+      .exec();
+    if (!nurses.length) {
+      return res.status(400).json({ message: "No valid nurse users provided" });
+    }
+
+    let selectedModuleIds = Array.isArray(moduleIds) ? moduleIds : [];
+    if (selectedModuleIds.length === 0) {
+      const allCourseModules = await Module.find({ courseId })
+        .select({ _id: 1 })
+        .lean()
+        .exec();
+      selectedModuleIds = allCourseModules.map((m) => m._id);
+    }
+
+    const validModules = await Module.find({
+      _id: { $in: selectedModuleIds },
+      courseId,
+    })
+      .select({ _id: 1 })
+      .lean()
+      .exec();
+    if (!validModules.length) {
+      return res.status(400).json({ message: "No valid modules selected" });
+    }
+
+    const dueDateValue = dueDate ? new Date(dueDate) : null;
+    if (dueDate && Number.isNaN(dueDateValue?.getTime())) {
+      return res.status(400).json({ message: "Invalid dueDate" });
+    }
+
+    const operations = [];
+    for (const nurse of nurses) {
+      for (const mod of validModules) {
+        operations.push({
+          updateOne: {
+            filter: { nurseId: nurse._id, moduleId: mod._id },
+            update: {
+              $set: {
+                courseId,
+                assignedBy: req.user._id,
+                assignedAt: new Date(),
+                ...(dueDateValue ? { dueDate: dueDateValue } : {}),
+              },
+              $setOnInsert: {
+                status: "NOT_STARTED",
+              },
+            },
+            upsert: true,
+          },
+        });
+      }
+    }
+
+    if (operations.length) {
+      await ModuleAssignment.bulkWrite(operations, { ordered: false });
+    }
+
+    return res.status(201).json({ message: "Modules assigned successfully" });
+  } catch (err) {
+    console.error("Error assigning modules", err);
+    return res.status(500).json({ message: "Failed to assign modules" });
+  }
+});
+
+// Admin - list assignments
+app.get("/api/assignments", requireAdmin(), async (req, res) => {
+  try {
+    const query = {};
+    if (req.query.nurseId) {
+      query.nurseId = req.query.nurseId;
+    }
+    const assignments = await ModuleAssignment.find(query)
+      .sort({ assignedAt: -1 })
+      .populate("nurseId", "name email department")
+      .populate("courseId", "title")
+      .populate("moduleId", "title order")
+      .lean()
+      .exec();
+    return res.json(assignments);
+  } catch (err) {
+    console.error("Error fetching assignments", err);
+    return res.status(500).json({ message: "Failed to fetch assignments" });
+  }
+});
+
+// Nurse - list my assigned modules
+app.get("/api/assignments/my-modules", requireAuth(), async (req, res) => {
+  try {
+    const current = req.user;
+    if (current.role !== "nurse") {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const assignments = await ModuleAssignment.find({ nurseId: current._id })
+      .sort({ assignedAt: -1 })
+      .populate("courseId", "title departmentId")
+      .populate("moduleId", "title order estimatedDuration")
+      .lean()
+      .exec();
+
+    const departmentIds = assignments
+      .map((a) => a?.courseId?.departmentId)
+      .filter(Boolean);
+    const departments = await Department.find({ _id: { $in: departmentIds } })
+      .select({ _id: 1, name: 1 })
+      .lean()
+      .exec();
+    const deptById = new Map(departments.map((d) => [String(d._id), d]));
+
+    const payload = assignments
+      .filter((a) => a.courseId && a.moduleId)
+      .map((a) => ({
+        _id: a._id,
+        courseId: a.courseId._id,
+        moduleId: a.moduleId._id,
+        assignedAt: a.assignedAt,
+        dueDate: a.dueDate || null,
+        status: a.status,
+        course: {
+          _id: a.courseId._id,
+          title: a.courseId.title,
+          departmentId: a.courseId.departmentId,
+        },
+        module: {
+          _id: a.moduleId._id,
+          title: a.moduleId.title,
+          order: a.moduleId.order,
+          estimatedDuration: a.moduleId.estimatedDuration || "",
+        },
+        department: a.courseId?.departmentId
+          ? deptById.get(String(a.courseId.departmentId)) || null
+          : null,
+      }));
+
+    return res.json(payload);
+  } catch (err) {
+    console.error("Error fetching my assigned modules", err);
+    return res.status(500).json({ message: "Failed to fetch assigned modules" });
+  }
+});
+
+// Nurse/Admin - update assignment status; Admin can also update due date
+app.patch("/api/assignments/:id", requireAuth(), async (req, res) => {
+  try {
+    const { status, dueDate } = req.body || {};
+    const assignment = await ModuleAssignment.findById(req.params.id).exec();
+    if (!assignment) {
+      return res.status(404).json({ message: "Assignment not found" });
+    }
+
+    const isOwner = String(assignment.nurseId) === String(req.user._id);
+    const isAdmin = req.user.role === "admin";
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    if (typeof status === "string") {
+      const allowed = ["NOT_STARTED", "IN_PROGRESS", "COMPLETED"];
+      if (!allowed.includes(status)) {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+      const currentStatus = assignment.status;
+      const validTransition =
+        currentStatus === status ||
+        (currentStatus === "NOT_STARTED" && status === "IN_PROGRESS") ||
+        (currentStatus === "IN_PROGRESS" && status === "COMPLETED");
+      if (!validTransition) {
+        return res.status(400).json({
+          message:
+            "Invalid status transition. Allowed: NOT_STARTED -> IN_PROGRESS -> COMPLETED",
+        });
+      }
+      assignment.status = status;
+    }
+
+    if (isAdmin && dueDate !== undefined) {
+      if (dueDate === null || dueDate === "") {
+        assignment.dueDate = null;
+      } else {
+        const parsed = new Date(dueDate);
+        if (Number.isNaN(parsed.getTime())) {
+          return res.status(400).json({ message: "Invalid dueDate" });
+        }
+        assignment.dueDate = parsed;
+      }
+    }
+
+    await assignment.save();
+    return res.json(assignment.toObject());
+  } catch (err) {
+    console.error("Error updating assignment", err);
+    return res.status(500).json({ message: "Failed to update assignment" });
+  }
+});
+
+// Admin - remove assignment
+app.delete("/api/assignments/:id", requireAdmin(), async (req, res) => {
+  try {
+    const deleted = await ModuleAssignment.findByIdAndDelete(req.params.id)
+      .lean()
+      .exec();
+    if (!deleted) {
+      return res.status(404).json({ message: "Assignment not found" });
+    }
+    return res.json({ message: "Assignment removed" });
+  } catch (err) {
+    console.error("Error removing assignment", err);
+    return res.status(500).json({ message: "Failed to remove assignment" });
+  }
+});
+
 // Learner/Admin - list modules available to current user
 app.get("/api/me/modules", requireAuth(), async (req, res) => {
   try {
@@ -1299,15 +1490,21 @@ app.get("/api/me/modules", requireAuth(), async (req, res) => {
     const isAdmin = current.role === "admin";
 
     let courseIds = [];
+    let assignedModuleIds = [];
+    let assignmentByModuleId = new Map();
     if (isAdmin) {
       const allCourses = await Course.find({}).select({ _id: 1 }).lean().exec();
       courseIds = allCourses.map((c) => c._id);
     } else {
-      const enrollments = await Enrollment.find({ userId: current._id })
-        .select({ courseId: 1 })
+      const assignments = await ModuleAssignment.find({ nurseId: current._id })
+        .select({ courseId: 1, moduleId: 1, status: 1, dueDate: 1 })
         .lean()
         .exec();
-      courseIds = enrollments.map((e) => e.courseId);
+      assignedModuleIds = assignments.map((a) => a.moduleId);
+      courseIds = [...new Set(assignments.map((a) => String(a.courseId)))];
+      assignmentByModuleId = new Map(
+        assignments.map((a) => [String(a.moduleId), a])
+      );
     }
 
     const courses = await Course.find({ _id: { $in: courseIds } })
@@ -1317,7 +1514,10 @@ app.get("/api/me/modules", requireAuth(), async (req, res) => {
     const deptById = new Map(departments.map((d) => [String(d._id), d]));
     const courseById = new Map(courses.map((c) => [String(c._id), c]));
 
-    const modules = await Module.find({ courseId: { $in: courseIds } })
+    const moduleQuery = isAdmin
+      ? { courseId: { $in: courseIds } }
+      : { _id: { $in: assignedModuleIds } };
+    const modules = await Module.find(moduleQuery)
       .sort({ order: 1 })
       .lean()
       .exec();
@@ -1332,7 +1532,14 @@ app.get("/api/me/modules", requireAuth(), async (req, res) => {
     const result = modules.map((m) => {
       const course = courseById.get(String(m.courseId));
       const dept = course ? deptById.get(String(course.departmentId)) : null;
-      const progress = progressByModuleId.get(String(m._id));
+      const progress = isAdmin
+        ? progressByModuleId.get(String(m._id))
+        : assignmentByModuleId.get(String(m._id));
+      const progressMapped = isAdmin
+        ? progress
+          ? { status: progress.status, percent: progress.percent }
+          : { status: "not-started", percent: 0 }
+        : mapAssignmentStatusToProgress(progress?.status);
       return {
         _id: m._id,
         title: m.title,
@@ -1341,9 +1548,8 @@ app.get("/api/me/modules", requireAuth(), async (req, res) => {
           ? { _id: course._id, title: course.title, departmentId: course.departmentId }
           : null,
         department: dept ? { _id: dept._id, name: dept.name } : null,
-        progress: progress
-          ? { status: progress.status, percent: progress.percent }
-          : { status: "not-started", percent: 0 },
+        dueDate: progress?.dueDate || null,
+        progress: progressMapped,
       };
     });
 
@@ -1383,6 +1589,19 @@ app.post("/api/modules/:moduleId/progress", requireAuth(), async (req, res) => {
       .lean()
       .exec();
 
+    if (next.status) {
+      const mapped =
+        next.status === "completed"
+          ? "COMPLETED"
+          : next.status === "in-progress"
+          ? "IN_PROGRESS"
+          : "NOT_STARTED";
+      await ModuleAssignment.findOneAndUpdate(
+        { nurseId: req.user._id, moduleId: req.params.moduleId },
+        { $set: { status: mapped } }
+      ).exec();
+    }
+
     res.json({ status: doc.status, percent: doc.percent });
   } catch (err) {
     console.error("Error updating progress", err);
@@ -1409,10 +1628,11 @@ app.post(
       const fileDoc = await NurseFile.create({
         nurseEmail,
         title,
-        filename: req.file.filename,
+        filename: req.file.originalname,
         originalName: req.file.originalname,
         mimeType: req.file.mimetype,
         size: req.file.size,
+        data: req.file.buffer,
         uploadedBy: uploadedBy || null,
       });
 
@@ -1447,11 +1667,12 @@ app.get("/api/nurse-files/:id/download", async (req, res) => {
     if (!fileDoc) {
       return res.status(404).json({ message: "File not found" });
     }
-    const filePath = path.join(uploadsDir, fileDoc.filename);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ message: "File not found on disk" });
+    if (!fileDoc.data) {
+      return res.status(404).json({ message: "File data not found" });
     }
-    res.download(filePath, fileDoc.originalName);
+    res.setHeader("Content-Type", fileDoc.mimeType || "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileDoc.originalName}"`);
+    return res.send(fileDoc.data);
   } catch (err) {
     console.error("Error downloading nurse file", err);
     res.status(500).json({ message: "Failed to download file" });
@@ -1488,8 +1709,15 @@ app.get("/api/modules/:moduleId/questions/learner", requireAuth(), async (req, r
       .lean()
       .exec();
 
-    // Remove correctAnswer for learners
-    const safe = questions.map(({ correctAnswer, ...rest }) => rest);
+    // Remove correctAnswer for learners and ensure true/false questions always have options.
+    const safe = questions.map(({ correctAnswer, ...rest }) => ({
+      ...rest,
+      options:
+        rest.type === "true-false" &&
+        (!Array.isArray(rest.options) || rest.options.length < 2)
+          ? ["True", "False"]
+          : rest.options,
+    }));
     res.json(safe);
   } catch (err) {
     console.error("Error fetching questions", err);
@@ -1530,7 +1758,10 @@ app.post("/api/modules/:moduleId/questions", requireAdmin(), async (req, res) =>
       moduleId: req.params.moduleId,
       question: question.trim(),
       type,
-      options: type === "mcq" ? options.map(o => String(o).trim()) : [],
+      options:
+        type === "mcq"
+          ? options.map((o) => String(o).trim())
+          : ["True", "False"],
       correctAnswer: String(correctAnswer).trim(),
       order,
     });
@@ -1608,7 +1839,7 @@ app.post("/api/questions/:id/check", requireAuth(), async (req, res) => {
     }
 
     const correct = String(question.correctAnswer || "").trim();
-    const isCorrect = answer === correct;
+    const isCorrect = answer.toLowerCase() === correct.toLowerCase();
     return res.json({ isCorrect, correctAnswer: correct });
   } catch (err) {
     console.error("Error checking answer", err);
@@ -1637,7 +1868,10 @@ app.post("/api/modules/:moduleId/quiz-attempt", requireAuth(), async (req, res) 
     let correctCount = 0;
     const scoredAnswers = answers.map(({ questionId, selectedAnswer }) => {
       const question = questionMap.get(String(questionId));
-      const isCorrect = question && selectedAnswer === question.correctAnswer;
+      const isCorrect =
+        !!question &&
+        String(selectedAnswer || "").trim().toLowerCase() ===
+          String(question.correctAnswer || "").trim().toLowerCase();
       if (isCorrect) correctCount++;
       return {
         questionId,
@@ -1654,6 +1888,11 @@ app.post("/api/modules/:moduleId/quiz-attempt", requireAuth(), async (req, res) 
       score: correctCount,
       totalQuestions: questions.length,
     });
+
+    await ModuleAssignment.findOneAndUpdate(
+      { nurseId: req.user._id, moduleId: req.params.moduleId },
+      { $set: { status: "COMPLETED" } }
+    ).exec();
 
     res.status(201).json({
       _id: attempt._id,

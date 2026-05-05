@@ -7,6 +7,20 @@ import path from "path";
 import fs from "fs";
 import multer from "multer";
 import crypto from "crypto";
+import { buildModuleRoutes } from "./routes/moduleRoutes.js";
+import {
+  User,
+  Department,
+  Course,
+  Module,
+  Lesson,
+  SOP,
+  Enrollment,
+  Progress,
+  NurseFile,
+  Question,
+  QuizAttempt,
+} from "./schemas/models.js";
 
 dotenv.config();
 
@@ -24,7 +38,8 @@ if (!fs.existsSync(uploadsDir)) {
 const nurseFilesDir = path.join(uploadsDir, "nurse-files");
 const lessonsDir = path.join(uploadsDir, "lessons");
 const sopsDir = path.join(uploadsDir, "sops");
-for (const dir of [nurseFilesDir, lessonsDir, sopsDir]) {
+const moduleContentsDir = path.join(uploadsDir, "module-contents");
+for (const dir of [nurseFilesDir, lessonsDir, sopsDir, moduleContentsDir]) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -91,181 +106,27 @@ const sopPdfUpload = multer({
   },
 });
 
-// Mongo models
-const userSchema = new mongoose.Schema(
-  {
-    email: { type: String, required: true, unique: true, lowercase: true },
-    name: { type: String, required: true },
-    empId: { type: String, required: true },
-    department: { type: String, required: true },
-    role: { type: String, enum: ["nurse", "admin"], default: "nurse" },
-    password: { type: String, required: true },
+const moduleContentUpload = multer({
+  storage: diskStorage(moduleContentsDir),
+  limits: { fileSize: MAX_UPLOAD_BYTES },
+  fileFilter: (req, file, cb) => {
+    const mime = String(file.mimetype || "");
+    const filename = String(file.originalname || "").toLowerCase();
+    const ok =
+      mime === "application/pdf" ||
+      mime === "text/plain" ||
+      mime === "application/zip" ||
+      mime === "application/x-zip-compressed" ||
+      mime.startsWith("video/") ||
+      filename.endsWith(".scorm") ||
+      filename.endsWith(".zip") ||
+      filename.endsWith(".txt");
+    if (!ok) {
+      return cb(new Error("Only PDF, video, SCORM(zip), and text files are allowed"));
+    }
+    cb(null, true);
   },
-  { timestamps: true }
-);
-
-const User = mongoose.model("User", userSchema);
-
-const departmentSchema = new mongoose.Schema(
-  {
-    name: { type: String, required: true, unique: true, trim: true },
-  },
-  { timestamps: true }
-);
-const Department = mongoose.model("Department", departmentSchema);
-
-const courseSchema = new mongoose.Schema(
-  {
-    departmentId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Department",
-      required: true,
-      index: true,
-    },
-    title: { type: String, required: true, trim: true },
-    description: { type: String, default: "", trim: true },
-  },
-  { timestamps: true }
-);
-const Course = mongoose.model("Course", courseSchema);
-
-const moduleSchema = new mongoose.Schema(
-  {
-    courseId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Course",
-      required: true,
-      index: true,
-    },
-    title: { type: String, required: true, trim: true },
-    order: { type: Number, required: true },
-  },
-  { timestamps: true }
-);
-moduleSchema.index({ courseId: 1, order: 1 }, { unique: true });
-const Module = mongoose.model("Module", moduleSchema);
-
-const lessonSchema = new mongoose.Schema(
-  {
-    moduleId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Module",
-      required: true,
-      index: true,
-    },
-    title: { type: String, required: true, trim: true },
-    type: { type: String, enum: ["pdf", "video"], required: true },
-    filename: { type: String, required: true },
-    originalName: { type: String, required: true },
-    mimeType: { type: String, required: true },
-    size: { type: Number, required: true },
-    uploadedBy: { type: String },
-  },
-  { timestamps: true }
-);
-const Lesson = mongoose.model("Lesson", lessonSchema);
-
-const sopSchema = new mongoose.Schema(
-  {
-    moduleId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Module",
-      required: true,
-      index: true,
-    },
-    title: { type: String, required: true, trim: true },
-    filename: { type: String, required: true },
-    originalName: { type: String, required: true },
-    mimeType: { type: String, required: true },
-    size: { type: Number, required: true },
-    uploadedBy: { type: String },
-  },
-  { timestamps: true }
-);
-const SOP = mongoose.model("SOP", sopSchema);
-
-const enrollmentSchema = new mongoose.Schema(
-  {
-    userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-      index: true,
-    },
-    courseId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Course",
-      required: true,
-      index: true,
-    },
-  },
-  { timestamps: true }
-);
-enrollmentSchema.index({ userId: 1, courseId: 1 }, { unique: true });
-const Enrollment = mongoose.model("Enrollment", enrollmentSchema);
-
-const progressSchema = new mongoose.Schema(
-  {
-    userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-      index: true,
-    },
-    moduleId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Module",
-      required: true,
-      index: true,
-    },
-    status: {
-      type: String,
-      enum: ["not-started", "in-progress", "completed"],
-      default: "not-started",
-    },
-    percent: { type: Number, default: 0, min: 0, max: 100 },
-  },
-  { timestamps: true }
-);
-progressSchema.index({ userId: 1, moduleId: 1 }, { unique: true });
-const Progress = mongoose.model("Progress", progressSchema);
-
-const nurseFileSchema = new mongoose.Schema(
-  {
-    nurseEmail: { type: String, required: true },
-    title: { type: String, required: true },
-    filename: { type: String, required: true }, // stored filename on disk
-    originalName: { type: String, required: true },
-    mimeType: { type: String, required: true },
-    size: { type: Number, required: true },
-    uploadedBy: { type: String }, // admin email
-  },
-  { timestamps: true }
-);
-
-const NurseFile = mongoose.model("NurseFile", nurseFileSchema);
-
-// Very simple in-memory demo users for auth
-const demoUsers = {
-  "nurse@hospital.com": {
-    id: "1",
-    email: "nurse@hospital.com",
-    password: "nurse123",
-    name: "Sarah Nagi",
-    role: "nurse",
-    department: "Intensive Care Unit (ICU)",
-    supervisor: "Dr. Ram Prasad",
-    shiftTime: "7:00 AM - 7:00 PM",
-  },
-  "admin@hospital.com": {
-    id: "2",
-    email: "admin@hospital.com",
-    password: "admin123",
-    name: "Harsh Agarwal",
-    role: "admin",
-    department: "Training Administration",
-  },
-};
+});
 
 // Middleware
 // Allow all local dev origins and handle CORS automatically
@@ -293,24 +154,8 @@ async function getRequestUser(req) {
       : "";
   if (!email) return null;
   
-  // First try to find in MongoDB
   const user = await User.findOne({ email }).lean().exec();
-  if (user) return user;
-  
-  // Fallback to demo users for development
-  const demoUser = demoUsers[email];
-  if (demoUser) {
-    // Convert demo user to match database format
-    return {
-      _id: demoUser.id,
-      email: demoUser.email,
-      name: demoUser.name,
-      role: demoUser.role,
-      department: demoUser.department,
-    };
-  }
-  
-  return null;
+  return user || null;
 }
 
 function requireAuth() {
@@ -382,32 +227,67 @@ app.post("/api/auth/login", (req, res) => {
       .json({ message: "Email and password are required" });
   }
 
-  // First try to authenticate against persistent MongoDB users
   User.findOne({ email: normalizedEmail })
     .lean()
     .then((dbUser) => {
-      if (dbUser && dbUser.password === normalizedPassword) {
-        const { password: _pw, ...userWithoutPassword } = dbUser;
-        const token = "demo-token";
-        return res.json({ user: userWithoutPassword, token });
-      }
-
-      // Fallback to in-memory demo users
-      const demoUser = demoUsers[normalizedEmail];
-      if (!demoUser || demoUser.password !== normalizedPassword) {
+      if (!dbUser || dbUser.password !== normalizedPassword) {
         return res
           .status(401)
           .json({ message: "Invalid email or password" });
       }
 
-      const { password: _demoPw, ...demoUserWithoutPassword } = demoUser;
-      const token = "demo-token";
-      return res.json({ user: demoUserWithoutPassword, token });
+      const { password: _pw, ...userWithoutPassword } = dbUser;
+      const token = "session-token";
+      return res.json({ user: userWithoutPassword, token });
     })
     .catch((err) => {
       console.error("Error during login", err);
       res.status(500).json({ message: "Failed to login" });
     });
+});
+
+app.post("/api/auth/bootstrap-admin", async (req, res) => {
+  try {
+    const existingUsers = await User.countDocuments({});
+    if (existingUsers > 0) {
+      return res.status(403).json({ message: "Bootstrap is disabled after first user creation" });
+    }
+
+    const { email, password, name, empId, department } = req.body || {};
+    const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+    const normalizedPassword = typeof password === "string" ? password.trim() : "";
+    const normalizedName = typeof name === "string" ? name.trim() : "";
+    const normalizedEmpId = typeof empId === "string" ? empId.trim() : "ADMIN-001";
+    const normalizedDepartment =
+      typeof department === "string" && department.trim()
+        ? department.trim()
+        : "Training Administration";
+
+    if (!normalizedEmail || !normalizedPassword || !normalizedName) {
+      return res
+        .status(400)
+        .json({ message: "email, password, and name are required" });
+    }
+
+    const user = await User.create({
+      email: normalizedEmail,
+      password: normalizedPassword,
+      name: normalizedName,
+      empId: normalizedEmpId,
+      department: normalizedDepartment,
+      role: "admin",
+    });
+
+    const userObj = user.toObject();
+    const { password: _pw, ...safeUser } = userObj;
+    return res.status(201).json({
+      message: "Initial admin user created",
+      user: safeUser,
+    });
+  } catch (err) {
+    console.error("Error bootstrapping admin", err);
+    return res.status(500).json({ message: "Failed to bootstrap admin user" });
+  }
 });
 
 // Admin - create user with demo password
@@ -478,6 +358,384 @@ app.get("/api/admin/users", requireAdmin(), async (req, res) => {
   } catch (err) {
     console.error("Error fetching users", err);
     return res.status(500).json({ message: "Failed to fetch users" });
+  }
+});
+
+app.get("/api/admin/course-library-stats", requireAdmin(), async (req, res) => {
+  try {
+    const [departmentsCount, coursesCount, modulesCount, questionsCount, activeNurses] =
+      await Promise.all([
+        Department.countDocuments({}),
+        Course.countDocuments({}),
+        Module.countDocuments({}),
+        Question.countDocuments({}),
+        User.countDocuments({ role: "nurse" }),
+      ]);
+
+    return res.json({
+      departments: departmentsCount,
+      totalModules: modulesCount,
+      questionBank: questionsCount,
+      activeNurses,
+      courses: coursesCount,
+    });
+  } catch (err) {
+    console.error("Error fetching course library stats", err);
+    return res.status(500).json({ message: "Failed to fetch stats" });
+  }
+});
+
+app.get("/api/admin/reports/module-progress", requireAdmin(), async (req, res) => {
+  try {
+    const [nurses, courses, modules, enrollments, progressDocs] = await Promise.all([
+      User.find({ role: "nurse" }).select({ _id: 1, name: 1, email: 1 }).lean().exec(),
+      Course.find({}).select({ _id: 1, title: 1 }).lean().exec(),
+      Module.find({}).select({ _id: 1, courseId: 1 }).lean().exec(),
+      Enrollment.find({}).select({ userId: 1, courseId: 1 }).lean().exec(),
+      Progress.find({}).select({ userId: 1, moduleId: 1, status: 1, percent: 1 }).lean().exec(),
+    ]);
+
+    const modulesByCourseId = new Map();
+    for (const mod of modules) {
+      const courseKey = String(mod.courseId);
+      const list = modulesByCourseId.get(courseKey) || [];
+      list.push(String(mod._id));
+      modulesByCourseId.set(courseKey, list);
+    }
+
+    const progressByUserAndModule = new Map();
+    for (const p of progressDocs) {
+      progressByUserAndModule.set(`${String(p.userId)}:${String(p.moduleId)}`, p);
+    }
+
+    const courseById = new Map(courses.map((c) => [String(c._id), c]));
+    const enrollmentsByUserId = new Map();
+    for (const e of enrollments) {
+      const userKey = String(e.userId);
+      const list = enrollmentsByUserId.get(userKey) || [];
+      list.push(String(e.courseId));
+      enrollmentsByUserId.set(userKey, list);
+    }
+
+    const nursesProgress = nurses.map((nurse) => {
+      const enrolledCourseIds = enrollmentsByUserId.get(String(nurse._id)) || [];
+      const courseProgress = enrolledCourseIds
+        .map((courseId) => {
+          const course = courseById.get(courseId);
+          if (!course) return null;
+
+          const moduleIds = modulesByCourseId.get(courseId) || [];
+          const totalModules = moduleIds.length;
+
+          let coveredModules = 0;
+          let completedModules = 0;
+          for (const moduleId of moduleIds) {
+            const progress = progressByUserAndModule.get(`${String(nurse._id)}:${moduleId}`);
+            if (progress && (progress.status === "completed" || Number(progress.percent || 0) > 0)) {
+              coveredModules += 1;
+            }
+            if (progress && progress.status === "completed") {
+              completedModules += 1;
+            }
+          }
+
+          return {
+            courseId,
+            courseTitle: course.title,
+            totalModules,
+            coveredModules,
+            completedModules,
+            percent: totalModules ? Math.round((coveredModules / totalModules) * 100) : 0,
+          };
+        })
+        .filter(Boolean);
+
+      const totalAssignedModules = courseProgress.reduce((sum, c) => sum + c.totalModules, 0);
+      const totalCoveredModules = courseProgress.reduce((sum, c) => sum + c.coveredModules, 0);
+
+      return {
+        nurseId: nurse._id,
+        nurseName: nurse.name,
+        nurseEmail: nurse.email,
+        totalAssignedModules,
+        totalCoveredModules,
+        overallPercent: totalAssignedModules
+          ? Math.round((totalCoveredModules / totalAssignedModules) * 100)
+          : 0,
+        courses: courseProgress,
+      };
+    });
+
+    return res.json(nursesProgress);
+  } catch (err) {
+    console.error("Error fetching admin module progress report", err);
+    return res.status(500).json({ message: "Failed to fetch progress report" });
+  }
+});
+
+app.get("/api/reports/my-module-progress", requireAuth(), async (req, res) => {
+  try {
+    const currentUser = req.user;
+    const enrollments = await Enrollment.find({ userId: currentUser._id })
+      .select({ courseId: 1 })
+      .lean()
+      .exec();
+    const courseIds = enrollments.map((e) => e.courseId);
+
+    const [courses, modules, progressDocs] = await Promise.all([
+      Course.find({ _id: { $in: courseIds } }).select({ _id: 1, title: 1 }).lean().exec(),
+      Module.find({ courseId: { $in: courseIds } }).select({ _id: 1, courseId: 1 }).lean().exec(),
+      Progress.find({ userId: currentUser._id }).select({ moduleId: 1, status: 1, percent: 1 }).lean().exec(),
+    ]);
+
+    const modulesByCourseId = new Map();
+    for (const mod of modules) {
+      const key = String(mod.courseId);
+      const list = modulesByCourseId.get(key) || [];
+      list.push(String(mod._id));
+      modulesByCourseId.set(key, list);
+    }
+
+    const progressByModuleId = new Map(progressDocs.map((p) => [String(p.moduleId), p]));
+
+    const courseProgress = courses.map((course) => {
+      const moduleIds = modulesByCourseId.get(String(course._id)) || [];
+      const totalModules = moduleIds.length;
+      let coveredModules = 0;
+      let completedModules = 0;
+
+      for (const moduleId of moduleIds) {
+        const progress = progressByModuleId.get(moduleId);
+        if (progress && (progress.status === "completed" || Number(progress.percent || 0) > 0)) {
+          coveredModules += 1;
+        }
+        if (progress && progress.status === "completed") {
+          completedModules += 1;
+        }
+      }
+
+      return {
+        courseId: course._id,
+        courseTitle: course.title,
+        totalModules,
+        coveredModules,
+        completedModules,
+        percent: totalModules ? Math.round((coveredModules / totalModules) * 100) : 0,
+      };
+    });
+
+    const totalAssignedModules = courseProgress.reduce((sum, c) => sum + c.totalModules, 0);
+    const totalCoveredModules = courseProgress.reduce((sum, c) => sum + c.coveredModules, 0);
+
+    return res.json({
+      nurseId: currentUser._id,
+      nurseName: currentUser.name,
+      nurseEmail: currentUser.email,
+      totalAssignedModules,
+      totalCoveredModules,
+      overallPercent: totalAssignedModules
+        ? Math.round((totalCoveredModules / totalAssignedModules) * 100)
+        : 0,
+      courses: courseProgress,
+    });
+  } catch (err) {
+    console.error("Error fetching my module progress report", err);
+    return res.status(500).json({ message: "Failed to fetch progress report" });
+  }
+});
+
+app.get("/api/admin/dashboard-summary", requireAdmin(), async (req, res) => {
+  try {
+    const now = new Date();
+    const next30 = new Date(now);
+    next30.setDate(now.getDate() + 30);
+
+    const [nursesCount, coursesCount, modulesCount, questionsCount, latestAttempts] =
+      await Promise.all([
+        User.countDocuments({ role: "nurse" }),
+        Course.countDocuments({}),
+        Module.countDocuments({}),
+        Question.countDocuments({}),
+        QuizAttempt.find({})
+          .sort({ createdAt: -1 })
+          .limit(10)
+          .lean()
+          .exec(),
+      ]);
+
+    const completionDocs = await Progress.find({ status: "completed" })
+      .select({ userId: 1, moduleId: 1, updatedAt: 1 })
+      .lean()
+      .exec();
+
+    const lowScoreAttempts = await QuizAttempt.find({})
+      .select({ userId: 1, moduleId: 1, score: 1, totalQuestions: 1, createdAt: 1 })
+      .lean()
+      .exec();
+
+    const recentActivity = latestAttempts.map((a) => ({
+      type: "quiz-attempt",
+      userId: a.userId,
+      moduleId: a.moduleId,
+      score: a.score,
+      totalQuestions: a.totalQuestions,
+      createdAt: a.createdAt,
+    }));
+
+    const nonCompliantCount = lowScoreAttempts.filter((a) => {
+      const total = Number(a.totalQuestions || 0);
+      if (!total) return false;
+      const pct = Math.round((Number(a.score || 0) / total) * 100);
+      return pct < 70;
+    }).length;
+
+    const completedThisMonth = completionDocs.filter((p) => {
+      const d = new Date(p.updatedAt);
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    }).length;
+
+    return res.json({
+      nursesCount,
+      coursesCount,
+      modulesCount,
+      questionsCount,
+      nonCompliantCount,
+      completedThisMonth,
+      expiringSoonCount: 0,
+      recentActivity,
+    });
+  } catch (err) {
+    console.error("Error fetching admin dashboard summary", err);
+    return res.status(500).json({ message: "Failed to fetch dashboard summary" });
+  }
+});
+
+app.get("/api/nurse/dashboard-summary", requireAuth(), async (req, res) => {
+  try {
+    const current = req.user;
+    const enrollments = await Enrollment.find({ userId: current._id })
+      .select({ courseId: 1 })
+      .lean()
+      .exec();
+    const courseIds = enrollments.map((e) => e.courseId);
+
+    const [modules, progressDocs, attempts] = await Promise.all([
+      Module.find({ courseId: { $in: courseIds } }).select({ _id: 1 }).lean().exec(),
+      Progress.find({ userId: current._id }).lean().exec(),
+      QuizAttempt.find({ userId: current._id }).lean().exec(),
+    ]);
+
+    const totalModules = modules.length;
+    const completedModules = progressDocs.filter((p) => p.status === "completed").length;
+    const inProgressModules = progressDocs.filter((p) => p.status === "in-progress").length;
+
+    const avgQuizScore = attempts.length
+      ? Math.round(
+          attempts.reduce((sum, a) => {
+            const total = Number(a.totalQuestions || 0);
+            const pct = total ? Math.round((Number(a.score || 0) / total) * 100) : 0;
+            return sum + pct;
+          }, 0) / attempts.length
+        )
+      : 0;
+
+    return res.json({
+      totalModules,
+      completedModules,
+      inProgressModules,
+      notStartedModules: Math.max(totalModules - completedModules - inProgressModules, 0),
+      avgQuizScore,
+      attemptsCount: attempts.length,
+    });
+  } catch (err) {
+    console.error("Error fetching nurse dashboard summary", err);
+    return res.status(500).json({ message: "Failed to fetch dashboard summary" });
+  }
+});
+
+app.get("/api/admin/certifications/overview", requireAdmin(), async (req, res) => {
+  try {
+    const nurses = await User.find({ role: "nurse" })
+      .select({ _id: 1, name: 1, department: 1 })
+      .lean()
+      .exec();
+    const progressDocs = await Progress.find({ status: "completed" })
+      .select({ userId: 1, updatedAt: 1 })
+      .lean()
+      .exec();
+
+    const completedByUser = new Map();
+    for (const p of progressDocs) {
+      const key = String(p.userId);
+      completedByUser.set(key, (completedByUser.get(key) || 0) + 1);
+    }
+
+    const logs = nurses.map((n, idx) => {
+      const completed = completedByUser.get(String(n._id)) || 0;
+      const status = completed >= 5 ? "active" : completed >= 1 ? "expiring" : "expired";
+      const score = Math.min(100, 60 + completed * 8);
+      return {
+        id: idx + 1,
+        nurse: n.name,
+        department: n.department || "General",
+        course: "Clinical Competency",
+        completionDate: progressDocs[0]?.updatedAt || null,
+        expiryDate: null,
+        score,
+        status,
+      };
+    });
+
+    return res.json({
+      totalCertified: logs.filter((x) => x.status === "active").length,
+      expiringCount: logs.filter((x) => x.status === "expiring").length,
+      nonCompliantCount: logs.filter((x) => x.status === "expired").length,
+      completedThisMonth: progressDocs.length,
+      logs,
+    });
+  } catch (err) {
+    console.error("Error fetching certifications overview", err);
+    return res.status(500).json({ message: "Failed to fetch certifications overview" });
+  }
+});
+
+app.get("/api/nurse/assessments/overview", requireAuth(), async (req, res) => {
+  try {
+    const attempts = await QuizAttempt.find({ userId: req.user._id })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+    const modules = await Module.find({}).select({ _id: 1, title: 1 }).lean().exec();
+    const moduleById = new Map(modules.map((m) => [String(m._id), m]));
+
+    const history = attempts.map((a, idx) => {
+      const total = Number(a.totalQuestions || 0);
+      const scorePct = total ? Math.round((Number(a.score || 0) / total) * 100) : 0;
+      return {
+        id: idx + 1,
+        module: moduleById.get(String(a.moduleId))?.title || "Module",
+        quiz: "Module Assessment",
+        score: scorePct,
+        status: scorePct >= 70 ? "passed" : "failed",
+        date: a.createdAt,
+      };
+    });
+
+    const passed = history.filter((h) => h.status === "passed").length;
+    const failed = history.filter((h) => h.status === "failed").length;
+    const avg = history.length
+      ? Math.round(history.reduce((sum, h) => sum + Number(h.score || 0), 0) / history.length)
+      : 0;
+
+    return res.json({
+      quizzesPassedPercent: history.length ? Math.round((passed / history.length) * 100) : 0,
+      retakesPending: failed,
+      avgScore: avg,
+      history,
+    });
+  } catch (err) {
+    console.error("Error fetching nurse assessments overview", err);
+    return res.status(500).json({ message: "Failed to fetch assessments overview" });
   }
 });
 
@@ -572,6 +830,19 @@ app.get("/api/courses", requireAuth(), async (req, res) => {
   }
 });
 
+app.get("/api/courses/:id", requireAuth(), async (req, res) => {
+  try {
+    const course = await Course.findById(req.params.id).lean().exec();
+    if (!course) {
+      return res.status(404).json({ message: "Course not found" });
+    }
+    res.json(course);
+  } catch (err) {
+    console.error("Error fetching course", err);
+    res.status(500).json({ message: "Failed to fetch course" });
+  }
+});
+
 app.post("/api/courses", requireAdmin(), async (req, res) => {
   try {
     const { departmentId, title, description } = req.body || {};
@@ -654,129 +925,50 @@ app.delete("/api/courses/:id", requireAdmin(), async (req, res) => {
   }
 });
 
-// Modules CRUD + reorder within course
-app.get("/api/courses/:courseId/modules", requireAuth(), async (req, res) => {
-  try {
-    const modules = await Module.find({ courseId: req.params.courseId })
-      .sort({ order: 1 })
-      .lean()
-      .exec();
-    res.json(modules);
-  } catch (err) {
-    console.error("Error fetching modules", err);
-    res.status(500).json({ message: "Failed to fetch modules" });
-  }
-});
-
-app.post("/api/courses/:courseId/modules", requireAdmin(), async (req, res) => {
-  try {
-    const { title } = req.body || {};
-    const trimmedTitle = typeof title === "string" ? title.trim() : "";
-    if (!trimmedTitle) {
-      return res.status(400).json({ message: "Module title is required" });
-    }
-    const courseExists = await Course.exists({ _id: req.params.courseId });
-    if (!courseExists) {
-      return res.status(400).json({ message: "Invalid courseId" });
-    }
-    const last = await Module.findOne({ courseId: req.params.courseId })
-      .sort({ order: -1 })
-      .lean()
-      .exec();
-    const nextOrder = last ? (last.order ?? 0) + 1 : 1;
-    const created = await Module.create({
-      courseId: req.params.courseId,
-      title: trimmedTitle,
-      order: nextOrder,
-    });
-    res.status(201).json(created);
-  } catch (err) {
-    console.error("Error creating module", err);
-    res.status(500).json({ message: "Failed to create module" });
-  }
-});
-
-app.put("/api/modules/:id", requireAdmin(), async (req, res) => {
-  try {
-    const { title } = req.body || {};
-    const update = {};
-    if (typeof title === "string") {
-      const trimmedTitle = title.trim();
-      if (!trimmedTitle) {
-        return res.status(400).json({ message: "title cannot be empty" });
-      }
-      update.title = trimmedTitle;
-    }
-    const updated = await Module.findByIdAndUpdate(req.params.id, update, {
-      new: true,
-    })
-      .lean()
-      .exec();
-    if (!updated) {
-      return res.status(404).json({ message: "Module not found" });
-    }
-    res.json(updated);
-  } catch (err) {
-    console.error("Error updating module", err);
-    res.status(500).json({ message: "Failed to update module" });
-  }
-});
-
-app.delete("/api/modules/:id", requireAdmin(), async (req, res) => {
-  try {
-    const deleted = await Module.findByIdAndDelete(req.params.id).lean().exec();
-    if (!deleted) {
-      return res.status(404).json({ message: "Module not found" });
-    }
-    res.json({ message: "Module deleted" });
-  } catch (err) {
-    console.error("Error deleting module", err);
-    res.status(500).json({ message: "Failed to delete module" });
-  }
-});
-
-app.post(
-  "/api/courses/:courseId/modules/reorder",
-  requireAdmin(),
-  async (req, res) => {
-  try {
-    const { orderedModuleIds } = req.body || {};
-    if (!Array.isArray(orderedModuleIds) || orderedModuleIds.length === 0) {
-      return res
-        .status(400)
-        .json({ message: "orderedModuleIds array is required" });
-    }
-
-    const courseId = req.params.courseId;
-    const modules = await Module.find({ courseId }).lean().exec();
-    const moduleIdSet = new Set(modules.map((m) => String(m._id)));
-    for (const id of orderedModuleIds) {
-      if (!moduleIdSet.has(String(id))) {
-        return res.status(400).json({
-          message: "orderedModuleIds must contain only modules in this course",
-        });
-      }
-    }
-    if (orderedModuleIds.length !== modules.length) {
-      return res.status(400).json({
-        message: "orderedModuleIds must include all modules for this course",
-      });
-    }
-
-    const bulk = orderedModuleIds.map((id, idx) => ({
-      updateOne: {
-        filter: { _id: id, courseId },
-        update: { $set: { order: idx + 1 } },
-      },
-    }));
-    await Module.bulkWrite(bulk);
-    res.json({ message: "Reordered successfully" });
-  } catch (err) {
-    console.error("Error reordering modules", err);
-    res.status(500).json({ message: "Failed to reorder modules" });
-  }
-  }
+app.use(
+  "/api",
+  buildModuleRoutes({
+    requireAuth,
+    requireAdmin,
+    moduleContentUpload,
+  })
 );
+
+app.get("/api/modules/:id/content/download", requireAuth(), async (req, res) => {
+  try {
+    const mod = await Module.findById(req.params.id).lean().exec();
+    if (!mod) {
+      return res.status(404).json({ message: "Module not found" });
+    }
+    const allowed = await canAccessModuleContent(req.user, String(mod._id));
+    if (!allowed) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const filename = mod.contentFile?.filename || "";
+    if (!filename) {
+      return res.status(404).json({ message: "No course content uploaded" });
+    }
+
+    const filePath = path.join(moduleContentsDir, filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ message: "File not found" });
+    }
+
+    res.setHeader(
+      "Content-Type",
+      mod.contentFile?.mimeType || "application/octet-stream"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${mod.contentFile?.originalName || "module-content"}"`
+    );
+    return res.sendFile(filePath);
+  } catch (err) {
+    console.error("Error downloading module content", err);
+    return res.status(500).json({ message: "Failed to download module content" });
+  }
+});
 
 // User - change own password
 app.post("/api/auth/change-password", async (req, res) => {
@@ -1263,6 +1455,249 @@ app.get("/api/nurse-files/:id/download", async (req, res) => {
   } catch (err) {
     console.error("Error downloading nurse file", err);
     res.status(500).json({ message: "Failed to download file" });
+  }
+});
+
+// Question Bank - Admin: Get all questions for a module
+app.get("/api/modules/:moduleId/questions", requireAuth(), async (req, res) => {
+  try {
+    if (req.user.role !== "admin") {
+      // For learners, don't show correct answers
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    const questions = await Question.find({ moduleId: req.params.moduleId })
+      .sort({ order: 1 })
+      .lean()
+      .exec();
+    res.json(questions);
+  } catch (err) {
+    console.error("Error fetching questions", err);
+    res.status(500).json({ message: "Failed to fetch questions" });
+  }
+});
+
+// Question Bank - Get questions for learner (without correct answers)
+app.get("/api/modules/:moduleId/questions/learner", requireAuth(), async (req, res) => {
+  try {
+    const allowed = await canAccessModuleContent(req.user, req.params.moduleId);
+    if (!allowed) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    const questions = await Question.find({ moduleId: req.params.moduleId })
+      .sort({ order: 1 })
+      .lean()
+      .exec();
+
+    // Remove correctAnswer for learners
+    const safe = questions.map(({ correctAnswer, ...rest }) => rest);
+    res.json(safe);
+  } catch (err) {
+    console.error("Error fetching questions", err);
+    res.status(500).json({ message: "Failed to fetch questions" });
+  }
+});
+
+// Question Bank - Admin: Create a question
+app.post("/api/modules/:moduleId/questions", requireAdmin(), async (req, res) => {
+  try {
+    const { question, type, options, correctAnswer } = req.body || {};
+
+    if (!question || !type || !correctAnswer) {
+      return res.status(400).json({ message: "question, type, and correctAnswer are required" });
+    }
+
+    if (!["mcq", "true-false"].includes(type)) {
+      return res.status(400).json({ message: "Invalid question type" });
+    }
+
+    if (type === "mcq" && (!Array.isArray(options) || options.length < 2)) {
+      return res.status(400).json({ message: "MCQ requires at least 2 options" });
+    }
+
+    const moduleExists = await Module.exists({ _id: req.params.moduleId });
+    if (!moduleExists) {
+      return res.status(400).json({ message: "Invalid moduleId" });
+    }
+
+    // Get the next order number
+    const lastQuestion = await Question.findOne({ moduleId: req.params.moduleId })
+      .sort({ order: -1 })
+      .lean()
+      .exec();
+    const order = (lastQuestion?.order || 0) + 1;
+
+    const created = await Question.create({
+      moduleId: req.params.moduleId,
+      question: question.trim(),
+      type,
+      options: type === "mcq" ? options.map(o => String(o).trim()) : [],
+      correctAnswer: String(correctAnswer).trim(),
+      order,
+    });
+
+    res.status(201).json(created);
+  } catch (err) {
+    console.error("Error creating question", err);
+    res.status(500).json({ message: "Failed to create question" });
+  }
+});
+
+// Question Bank - Admin: Update a question
+app.put("/api/questions/:id", requireAdmin(), async (req, res) => {
+  try {
+    const { question, type, options, correctAnswer } = req.body || {};
+
+    const updates = {};
+    if (question) updates.question = question.trim();
+    if (type) {
+      if (!["mcq", "true-false"].includes(type)) {
+        return res.status(400).json({ message: "Invalid question type" });
+      }
+      updates.type = type;
+    }
+    if (options) {
+      if (!Array.isArray(options) || options.length < 2) {
+        return res.status(400).json({ message: "MCQ requires at least 2 options" });
+      }
+      updates.options = options.map(o => String(o).trim());
+    }
+    if (correctAnswer) updates.correctAnswer = String(correctAnswer).trim();
+
+    const updated = await Question.findByIdAndUpdate(req.params.id, updates, { new: true }).lean().exec();
+    if (!updated) {
+      return res.status(404).json({ message: "Question not found" });
+    }
+
+    res.json(updated);
+  } catch (err) {
+    console.error("Error updating question", err);
+    res.status(500).json({ message: "Failed to update question" });
+  }
+});
+
+// Question Bank - Admin: Delete a question
+app.delete("/api/questions/:id", requireAdmin(), async (req, res) => {
+  try {
+    const deleted = await Question.findByIdAndDelete(req.params.id).lean().exec();
+    if (!deleted) {
+      return res.status(404).json({ message: "Question not found" });
+    }
+    res.json({ message: "Question deleted" });
+  } catch (err) {
+    console.error("Error deleting question", err);
+    res.status(500).json({ message: "Failed to delete question" });
+  }
+});
+
+app.post("/api/questions/:id/check", requireAuth(), async (req, res) => {
+  try {
+    const { selectedAnswer } = req.body || {};
+    const answer = typeof selectedAnswer === "string" ? selectedAnswer.trim() : "";
+    if (!answer) {
+      return res.status(400).json({ message: "selectedAnswer is required" });
+    }
+
+    const question = await Question.findById(req.params.id).lean().exec();
+    if (!question) {
+      return res.status(404).json({ message: "Question not found" });
+    }
+
+    const allowed = await canAccessModuleContent(req.user, String(question.moduleId));
+    if (!allowed) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const correct = String(question.correctAnswer || "").trim();
+    const isCorrect = answer === correct;
+    return res.json({ isCorrect, correctAnswer: correct });
+  } catch (err) {
+    console.error("Error checking answer", err);
+    return res.status(500).json({ message: "Failed to check answer" });
+  }
+});
+
+// Quiz Attempt - Learner: Submit quiz answers
+app.post("/api/modules/:moduleId/quiz-attempt", requireAuth(), async (req, res) => {
+  try {
+    const { answers } = req.body || {};
+
+    if (!Array.isArray(answers)) {
+      return res.status(400).json({ message: "answers array is required" });
+    }
+
+    const allowed = await canAccessModuleContent(req.user, req.params.moduleId);
+    if (!allowed) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    // Validate and score answers
+    const questions = await Question.find({ moduleId: req.params.moduleId }).lean().exec();
+    const questionMap = new Map(questions.map(q => [String(q._id), q]));
+
+    let correctCount = 0;
+    const scoredAnswers = answers.map(({ questionId, selectedAnswer }) => {
+      const question = questionMap.get(String(questionId));
+      const isCorrect = question && selectedAnswer === question.correctAnswer;
+      if (isCorrect) correctCount++;
+      return {
+        questionId,
+        selectedAnswer,
+        isCorrect: !!isCorrect,
+        correctAnswer: question ? question.correctAnswer : null,
+      };
+    });
+
+    const attempt = await QuizAttempt.create({
+      userId: req.user._id,
+      moduleId: req.params.moduleId,
+      answers: scoredAnswers,
+      score: correctCount,
+      totalQuestions: questions.length,
+    });
+
+    res.status(201).json({
+      _id: attempt._id,
+      score: attempt.score,
+      totalQuestions: attempt.totalQuestions,
+      percent: Math.round((correctCount / questions.length) * 100),
+      answers: scoredAnswers,
+    });
+  } catch (err) {
+    console.error("Error submitting quiz attempt", err);
+    res.status(500).json({ message: "Failed to submit quiz" });
+  }
+});
+
+// Quiz Attempt - Learner: Get latest quiz attempt for a module
+app.get("/api/modules/:moduleId/quiz-attempt", requireAuth(), async (req, res) => {
+  try {
+    const allowed = await canAccessModuleContent(req.user, req.params.moduleId);
+    if (!allowed) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const attempt = await QuizAttempt.findOne({
+      userId: req.user._id,
+      moduleId: req.params.moduleId,
+    })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    if (!attempt) {
+      return res.json(null);
+    }
+
+    res.json({
+      _id: attempt._id,
+      score: attempt.score,
+      totalQuestions: attempt.totalQuestions,
+      percent: attempt.totalQuestions ? Math.round((attempt.score / attempt.totalQuestions) * 100) : 0,
+      createdAt: attempt.createdAt,
+    });
+  } catch (err) {
+    console.error("Error fetching quiz attempt", err);
+    res.status(500).json({ message: "Failed to fetch quiz attempt" });
   }
 });
 

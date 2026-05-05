@@ -23,31 +23,6 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-interface DemoUser extends User {
-  password: string;
-}
-
-const demoUsers: Record<string, DemoUser> = {
-  'nurse@hospital.com': {
-    id: '1',
-    email: 'nurse@hospital.com',
-    password: 'nurse123',
-    name: 'Sarah Johnson',
-    role: 'nurse',
-    department: 'Intensive Care Unit (ICU)',
-    supervisor: 'Dr. Michael Chen',
-    shiftTime: '7:00 AM - 7:00 PM',
-  },
-  'admin@hospital.com': {
-    id: '2',
-    email: 'admin@hospital.com',
-    password: 'admin123',
-    name: 'Emily Rodriguez',
-    role: 'admin',
-    department: 'Training Administration',
-  },
-};
-
 const API_BASE_URL =
   (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:4000';
 
@@ -93,15 +68,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(data.user as User);
       return true;
     } catch (err) {
-      // If backend is unreachable or errors, fall back to local demo users
-      const demoUser = demoUsers[normalizedEmail];
-      if (demoUser && demoUser.password === normalizedPassword) {
-        const { password: _pw, ...userWithoutPassword } = demoUser;
-        setUser(userWithoutPassword);
-        return true;
-      }
-
-      // Re-throw so the caller can show a generic error message
       throw err;
     }
   };

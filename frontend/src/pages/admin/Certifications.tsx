@@ -18,76 +18,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 
-const certificationLogs = [
-  { 
-    id: 1, 
-    nurse: 'Sarah Johnson', 
-    department: 'ICU', 
-    course: 'Basic Life Support (BLS)',
-    completionDate: 'Jan 15, 2024',
-    expiryDate: 'Jan 15, 2026',
-    score: 95,
-    status: 'active'
-  },
-  { 
-    id: 2, 
-    nurse: 'James Wilson', 
-    department: 'Emergency', 
-    course: 'Advanced Cardiac Life Support',
-    completionDate: 'Mar 20, 2024',
-    expiryDate: 'Mar 20, 2026',
-    score: 88,
-    status: 'active'
-  },
-  { 
-    id: 3, 
-    nurse: 'Maria Garcia', 
-    department: 'Pediatrics', 
-    course: 'Pediatric Advanced Life Support',
-    completionDate: 'Aug 5, 2023',
-    expiryDate: 'Feb 5, 2025',
-    score: 92,
-    status: 'expiring'
-  },
-  { 
-    id: 4, 
-    nurse: 'Robert Brown', 
-    department: 'Surgery', 
-    course: 'Infection Control Certification',
-    completionDate: 'Nov 12, 2023',
-    expiryDate: 'Nov 12, 2024',
-    score: 78,
-    status: 'expired'
-  },
-  { 
-    id: 5, 
-    nurse: 'Jennifer Davis', 
-    department: 'Oncology', 
-    course: 'Chemotherapy Administration',
-    completionDate: 'Sep 30, 2024',
-    expiryDate: 'Sep 30, 2027',
-    score: 90,
-    status: 'active'
-  },
-  { 
-    id: 6, 
-    nurse: 'Michael Lee', 
-    department: 'Cardiology', 
-    course: 'ECG Interpretation',
-    completionDate: 'Dec 10, 2024',
-    expiryDate: 'Dec 10, 2026',
-    score: 85,
-    status: 'active'
-  },
-];
-
-const stats = [
-  { label: 'Total Certified', value: 1247, icon: Award, color: 'text-success', bg: 'bg-success/10' },
-  { label: 'Expiring (30 days)', value: 89, icon: Clock, color: 'text-warning', bg: 'bg-warning/10' },
-  { label: 'Non-Compliant', value: 23, icon: AlertTriangle, color: 'text-destructive', bg: 'bg-destructive/10' },
-  { label: 'Completed This Month', value: 156, icon: CheckCircle2, color: 'text-primary', bg: 'bg-primary/10' },
-];
+const API_BASE_URL =
+  (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:4000';
 
 const getStatusBadge = (status: string) => {
   switch (status) {
@@ -103,6 +38,45 @@ const getStatusBadge = (status: string) => {
 };
 
 export default function AdminCertifications() {
+  const { authHeaders } = useAuth();
+  const [overview, setOverview] = useState<any>(null);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    const loadOverview = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/certifications/overview`, {
+          headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(data?.message || 'Failed to load certifications');
+        setOverview(data);
+      } catch (err) {
+        console.error(err);
+        setOverview({ logs: [], totalCertified: 0, expiringCount: 0, nonCompliantCount: 0, completedThisMonth: 0 });
+      }
+    };
+    void loadOverview();
+  }, [authHeaders]);
+
+  const certificationLogs = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const logs = overview?.logs || [];
+    if (!q) return logs;
+    return logs.filter((l: any) =>
+      String(l.nurse || '').toLowerCase().includes(q) ||
+      String(l.department || '').toLowerCase().includes(q) ||
+      String(l.course || '').toLowerCase().includes(q)
+    );
+  }, [overview, search]);
+
+  const stats = [
+    { label: 'Total Certified', value: overview?.totalCertified ?? 0, icon: Award, color: 'text-success', bg: 'bg-success/10' },
+    { label: 'Expiring (30 days)', value: overview?.expiringCount ?? 0, icon: Clock, color: 'text-warning', bg: 'bg-warning/10' },
+    { label: 'Non-Compliant', value: overview?.nonCompliantCount ?? 0, icon: AlertTriangle, color: 'text-destructive', bg: 'bg-destructive/10' },
+    { label: 'Completed This Month', value: overview?.completedThisMonth ?? 0, icon: CheckCircle2, color: 'text-primary', bg: 'bg-primary/10' },
+  ];
+
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
@@ -146,7 +120,12 @@ export default function AdminCertifications() {
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Search nurses or certifications..." className="pl-9" />
+              <Input
+                placeholder="Search nurses or certifications..."
+                className="pl-9"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
             </div>
             <Select defaultValue="all">
               <SelectTrigger className="w-full sm:w-40">
@@ -211,7 +190,7 @@ export default function AdminCertifications() {
                   <td>{log.department}</td>
                   <td>{log.course}</td>
                   <td>{log.completionDate}</td>
-                  <td>{log.expiryDate}</td>
+                      <td>{log.expiryDate || '-'}</td>
                   <td>
                     <span className={`font-semibold ${
                       log.score >= 90 ? 'text-success' : log.score >= 80 ? 'text-warning' : 'text-destructive'
@@ -234,7 +213,7 @@ export default function AdminCertifications() {
           {/* Pagination */}
           <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
             <p className="text-sm text-muted-foreground">
-              Showing 1-6 of 1,247 records
+              Showing 1-{Math.min(certificationLogs.length, 6)} of {certificationLogs.length} records
             </p>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" disabled>Previous</Button>

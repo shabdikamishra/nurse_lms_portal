@@ -1,125 +1,125 @@
+import { useEffect, useMemo, useState } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { Button } from '@/components/ui/button';
-import { 
-  Download, 
-  Clock,
-  Target,
-  Award,
-  TrendingUp
-} from 'lucide-react';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { useAuth } from '@/contexts/AuthContext';
 import { Progress } from '@/components/ui/progress';
+import { BookOpen, CheckCircle2, TrendingUp } from 'lucide-react';
 
-const learningTrend = [
-  { month: 'Aug', hours: 12 },
-  { month: 'Sep', hours: 18 },
-  { month: 'Oct', hours: 15 },
-  { month: 'Nov', hours: 22 },
-  { month: 'Dec', hours: 28 },
-  { month: 'Jan', hours: 47 },
-];
+const API_BASE_URL =
+  (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:4000';
 
-const quizPerformance = [
-  { module: 'Ventilator', score: 92 },
-  { module: 'IV Safety', score: 88 },
-  { module: 'CPR', score: 95 },
-  { module: 'Sepsis', score: 65 },
-  { module: 'Fall Prev.', score: 78 },
-  { module: 'Med Admin', score: 82 },
-];
+type CourseProgress = {
+  courseId: string;
+  courseTitle: string;
+  totalModules: number;
+  coveredModules: number;
+  completedModules: number;
+  percent: number;
+};
 
-const stats = [
-  { label: 'Total Hours', value: '142h', subtitle: 'All time', icon: Clock, color: 'text-primary' },
-  { label: 'Avg. Quiz Score', value: '85%', subtitle: '+5% this month', icon: Target, color: 'text-success' },
-  { label: 'Certifications', value: '6', subtitle: 'Active', icon: Award, color: 'text-warning' },
-  { label: 'Learning Streak', value: '12', subtitle: 'Days', icon: TrendingUp, color: 'text-info' },
-];
-
-const moduleProgress = [
-  { name: 'Ventilator Management', progress: 100, status: 'Completed' },
-  { name: 'IV Medication Safety', progress: 100, status: 'Completed' },
-  { name: 'CPR & ACLS', progress: 100, status: 'Completed' },
-  { name: 'Sepsis Recognition', progress: 45, status: 'In Progress' },
-  { name: 'Infection Control', progress: 20, status: 'In Progress' },
-  { name: 'Blood Transfusion', progress: 0, status: 'Not Started' },
-];
+type MyReport = {
+  nurseId: string;
+  nurseName: string;
+  nurseEmail: string;
+  totalAssignedModules: number;
+  totalCoveredModules: number;
+  overallPercent: number;
+  courses: CourseProgress[];
+};
 
 export default function NurseReports() {
+  const { authHeaders } = useAuth();
+  const [report, setReport] = useState<MyReport | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadReport = async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/reports/my-module-progress`, {
+          headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(data?.message || 'Failed to load report');
+        setReport(data);
+      } catch (err) {
+        console.error(err);
+        setReport(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+    void loadReport();
+  }, [authHeaders]);
+
+  const completedCourses = useMemo(
+    () => (report?.courses || []).filter((c) => c.percent === 100).length,
+    [report]
+  );
+
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
           <div>
             <h1 className="text-2xl font-bold text-foreground">My Reports</h1>
             <p className="text-muted-foreground mt-1">
-              Track your learning progress and performance
+              Track course-wise module progress
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <Select defaultValue="6months">
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Time Period" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="30days">Last 30 Days</SelectItem>
-                <SelectItem value="3months">Last 3 Months</SelectItem>
-                <SelectItem value="6months">Last 6 Months</SelectItem>
-                <SelectItem value="1year">Last Year</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button>
-              <Download className="w-4 h-4 mr-2" />
-              Export Report
-            </Button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="healthcare-card">
+            <div className="flex items-center gap-2 text-muted-foreground text-sm">
+              <BookOpen className="w-4 h-4" />
+              Modules Covered
+            </div>
+            <p className="text-2xl font-bold text-foreground mt-2">
+              {report?.totalCoveredModules || 0}/{report?.totalAssignedModules || 0}
+            </p>
+          </div>
+          <div className="healthcare-card">
+            <div className="flex items-center gap-2 text-muted-foreground text-sm">
+              <TrendingUp className="w-4 h-4" />
+              Overall Progress
+            </div>
+            <p className="text-2xl font-bold text-foreground mt-2">{report?.overallPercent || 0}%</p>
+          </div>
+          <div className="healthcare-card">
+            <div className="flex items-center gap-2 text-muted-foreground text-sm">
+              <CheckCircle2 className="w-4 h-4" />
+              Courses Completed
+            </div>
+            <p className="text-2xl font-bold text-foreground mt-2">{completedCourses}</p>
           </div>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {stats.map((stat) => (
-            <div key={stat.label} className="healthcare-card">
-              <div className="flex items-center gap-3 mb-2">
-                <stat.icon className={`w-5 h-5 ${stat.color}`} />
-                <span className="text-sm text-muted-foreground">{stat.label}</span>
-              </div>
-              <p className="text-2xl font-bold text-foreground">{stat.value}</p>
-              <p className="text-xs text-muted-foreground">{stat.subtitle}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Module Progress */}
         <div className="healthcare-card">
-          <h3 className="text-lg font-semibold text-foreground mb-6">Module Progress</h3>
-          <div className="space-y-4">
-            {moduleProgress.map((module) => (
-              <div key={module.name} className="flex items-center gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-1">
-                    <p className="text-sm font-medium text-foreground truncate">{module.name}</p>
-                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                      module.status === 'Completed' ? 'bg-success/10 text-success' :
-                      module.status === 'In Progress' ? 'bg-warning/10 text-warning' :
-                      'bg-muted text-muted-foreground'
-                    }`}>
-                      {module.status}
+          <h3 className="text-lg font-semibold text-foreground mb-6">Course Coverage</h3>
+          {loading ? (
+            <p className="text-sm text-muted-foreground">Loading your progress...</p>
+          ) : !report || report.courses.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No enrolled course progress yet.</p>
+          ) : (
+            <div className="space-y-4">
+              {report.courses.map((course) => (
+                <div key={course.courseId} className="border border-border rounded-lg p-4">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <p className="text-sm font-medium text-foreground truncate">{course.courseTitle}</p>
+                    <span className="text-xs text-muted-foreground">
+                      {course.coveredModules}/{course.totalModules} modules
                     </span>
                   </div>
-                  <Progress value={module.progress} className="h-2" />
+                  <Progress value={course.percent} className="h-2" />
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {course.percent === 100
+                      ? 'Completed'
+                      : `${course.completedModules} completed, ${Math.max(course.coveredModules - course.completedModules, 0)} in progress`}
+                  </p>
                 </div>
-                <span className="text-sm font-medium text-muted-foreground w-12 text-right">
-                  {module.progress}%
-                </span>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </DashboardLayout>

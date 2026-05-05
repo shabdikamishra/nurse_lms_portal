@@ -25,6 +25,10 @@ import {
   BarChart,
   Bar
 } from 'recharts';
+import { useEffect, useState } from 'react';
+
+const API_BASE_URL =
+  (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:4000';
 
 // Mock data
 const learningTrend = [
@@ -43,43 +47,6 @@ const quizPerformance = [
   { module: 'Sepsis', score: 65 },
   { module: 'Fall Prev.', score: 78 },
   { module: 'Med Admin', score: 82 },
-];
-
-// Mock data
-const assignedModules = [
-  {
-    id: 1,
-    title: 'Ventilator Management & Patient Monitoring',
-    author: 'Dr. Sarah Mitchell',
-    thumbnail: 'https://images.unsplash.com/photo-1516549655169-df83a0774514?w=400&h=225&fit=crop',
-    status: 'in-progress' as const,
-    duration: '2h 30m',
-    progress: 65,
-  },
-  {
-    id: 2,
-    title: 'IV Medication & Infusion Pump Safety',
-    author: 'Prof. James Wilson',
-    thumbnail: 'https://images.unsplash.com/photo-1579684385127-1ef15d508118?w=400&h=225&fit=crop',
-    status: 'not-started' as const,
-    duration: '1h 45m',
-  },
-  {
-    id: 3,
-    title: 'CPR & ACLS Certification Prep',
-    author: 'Dr. Emily Chen',
-    thumbnail: 'https://images.unsplash.com/photo-1551190822-a9333d879b1f?w=400&h=225&fit=crop',
-    status: 'completed' as const,
-    duration: '3h 00m',
-  },
-  {
-    id: 4,
-    title: 'Sepsis Recognition & Early Intervention',
-    author: 'Dr. Michael Brown',
-    thumbnail: 'https://images.unsplash.com/photo-1559757148-5c350d0d3c56?w=400&h=225&fit=crop',
-    status: 'not-started' as const,
-    duration: '2h 15m',
-  },
 ];
 
 const upcomingClasses = [
@@ -122,7 +89,25 @@ const upcomingClasses = [
 ];
 
 export default function NurseDashboard() {
-  const { user } = useAuth();
+  const { user, authHeaders } = useAuth();
+  const [summary, setSummary] = useState<any>(null);
+
+  useEffect(() => {
+    const loadSummary = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/nurse/dashboard-summary`, {
+          headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(data?.message || 'Failed to load summary');
+        setSummary(data);
+      } catch (err) {
+        console.error(err);
+        setSummary(null);
+      }
+    };
+    void loadSummary();
+  }, [authHeaders]);
 
   if (!user) return null;
 
@@ -142,8 +127,8 @@ export default function NurseDashboard() {
         {/* User Details Board - Top */}
         <NurseProfileCard 
           user={user} 
-          completedModules={12} 
-          totalModules={18} 
+          completedModules={Number(summary?.completedModules || 0)} 
+          totalModules={Number(summary?.totalModules || 0)} 
         />
 
         {/* Quick Actions */}
@@ -153,29 +138,28 @@ export default function NurseDashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatsCard
             title="Modules Completed"
-            value="12"
-            subtitle="of 18 total"
+            value={String(summary?.completedModules ?? 0)}
+            subtitle={`of ${String(summary?.totalModules ?? 0)} total`}
             icon={CheckCircle2}
             variant="success"
           />
           <StatsCard
-            title="Hours Learned"
-            value="47.5"
-            subtitle="This month"
+            title="In Progress"
+            value={String(summary?.inProgressModules ?? 0)}
+            subtitle="Active modules"
             icon={Clock}
             variant="primary"
           />
           <StatsCard
             title="Quiz Score Avg"
-            value="92%"
-            subtitle="+5% from last month"
+            value={`${String(summary?.avgQuizScore ?? 0)}%`}
+            subtitle="Across attempts"
             icon={Target}
-            trend={{ value: 5, isPositive: true }}
           />
           <StatsCard
-            title="Certifications"
-            value="6"
-            subtitle="2 expiring soon"
+            title="Attempts"
+            value={String(summary?.attemptsCount ?? 0)}
+            subtitle="Total quizzes"
             icon={TrendingUp}
             variant="warning"
           />

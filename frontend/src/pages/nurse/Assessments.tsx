@@ -12,51 +12,60 @@ import {
 } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 
-const performanceStats = [
-  { label: 'Quizzes Passed', value: '85%', icon: CheckCircle2, color: 'text-success', bg: 'bg-success/10' },
-  { label: 'Simulation Success', value: '92%', icon: Target, color: 'text-primary', bg: 'bg-primary/10' },
-  { label: 'Time Spent', value: '47.5h', icon: Clock, color: 'text-warning', bg: 'bg-warning/10' },
-  { label: 'Retakes Pending', value: '2', icon: RotateCcw, color: 'text-destructive', bg: 'bg-destructive/10' },
-];
-
-const quizHistory = [
-  { id: 1, module: 'Ventilator Management', quiz: 'Module Assessment', score: 92, status: 'passed', date: 'Jan 25, 2025' },
-  { id: 2, module: 'IV Medication Safety', quiz: 'Final Quiz', score: 88, status: 'passed', date: 'Jan 22, 2025' },
-  { id: 3, module: 'CPR & ACLS', quiz: 'Certification Exam', score: 95, status: 'passed', date: 'Jan 18, 2025' },
-  { id: 4, module: 'Sepsis Recognition', quiz: 'Module Assessment', score: 65, status: 'failed', date: 'Jan 15, 2025' },
-  { id: 5, module: 'Patient Fall Prevention', quiz: 'Final Quiz', score: 78, status: 'passed', date: 'Jan 12, 2025' },
-  { id: 6, module: 'Medication Administration', quiz: 'Mid-Module Quiz', score: 82, status: 'passed', date: 'Jan 10, 2025' },
-];
-
-const pendingQuizzes = [
-  { 
-    id: 1, 
-    module: 'Sepsis Recognition & Early Intervention', 
-    department: 'ICU', 
-    supervisor: 'Dr. Michael Brown',
-    duration: '30 mins',
-    type: 'Retake'
-  },
-  { 
-    id: 2, 
-    module: 'Infection Control & Prevention', 
-    department: 'General',
-    supervisor: 'Dr. Amanda Foster',
-    duration: '45 mins',
-    type: 'New'
-  },
-  { 
-    id: 3, 
-    module: 'Blood Transfusion Protocols', 
-    department: 'Emergency',
-    supervisor: 'Dr. James Peterson',
-    duration: '30 mins',
-    type: 'New'
-  },
-];
+const API_BASE_URL =
+  (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:4000';
 
 export default function Assessments() {
+  const { authHeaders } = useAuth();
+  const [overview, setOverview] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    const loadOverview = async () => {
+      setIsLoading(true);
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/nurse/assessments/overview`, {
+          headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(data?.message || 'Failed to load assessments');
+        setOverview(data);
+      } catch (err) {
+        console.error(err);
+        setOverview({ history: [], retakesPending: 0, avgScore: 0, quizzesPassedPercent: 0 });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    void loadOverview();
+  }, [authHeaders]);
+
+  const quizHistory = overview?.history || [];
+  const pendingQuizzes = useMemo(
+    () =>
+      quizHistory
+        .filter((q: any) => q.status === 'failed')
+        .map((q: any) => ({
+          id: q.id,
+          module: q.module,
+          department: 'Assigned Course',
+          supervisor: 'Course Admin',
+          duration: '30 mins',
+          type: 'Retake',
+        })),
+    [quizHistory]
+  );
+
+  const performanceStats = [
+    { label: 'Quizzes Passed', value: `${overview?.quizzesPassedPercent ?? 0}%`, icon: CheckCircle2, color: 'text-success', bg: 'bg-success/10' },
+    { label: 'Avg Score', value: `${overview?.avgScore ?? 0}%`, icon: Target, color: 'text-primary', bg: 'bg-primary/10' },
+    { label: 'Attempts', value: String(quizHistory.length), icon: Clock, color: 'text-warning', bg: 'bg-warning/10' },
+    { label: 'Retakes Pending', value: String(overview?.retakesPending ?? 0), icon: RotateCcw, color: 'text-destructive', bg: 'bg-destructive/10' },
+  ];
+
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
@@ -90,23 +99,25 @@ export default function Assessments() {
             <div>
               <div className="flex justify-between text-sm mb-2">
                 <span className="text-muted-foreground">Quiz Completion</span>
-                <span className="font-medium text-foreground">24/28</span>
+                <span className="font-medium text-foreground">
+                  {quizHistory.filter((q: any) => q.status === 'passed').length}/{quizHistory.length}
+                </span>
               </div>
-              <Progress value={86} className="h-2" />
+              <Progress value={overview?.quizzesPassedPercent ?? 0} className="h-2" />
             </div>
             <div>
               <div className="flex justify-between text-sm mb-2">
-                <span className="text-muted-foreground">Simulations</span>
-                <span className="font-medium text-foreground">8/10</span>
+                <span className="text-muted-foreground">Average Score</span>
+                <span className="font-medium text-foreground">{overview?.avgScore ?? 0}%</span>
               </div>
-              <Progress value={80} className="h-2" />
+              <Progress value={overview?.avgScore ?? 0} className="h-2" />
             </div>
             <div>
               <div className="flex justify-between text-sm mb-2">
-                <span className="text-muted-foreground">Supervisor Reviews</span>
-                <span className="font-medium text-foreground">5/6</span>
+                <span className="text-muted-foreground">Retakes Pending</span>
+                <span className="font-medium text-foreground">{overview?.retakesPending ?? 0}</span>
               </div>
-              <Progress value={83} className="h-2" />
+              <Progress value={Math.min((overview?.retakesPending ?? 0) * 20, 100)} className="h-2" />
             </div>
           </div>
         </div>
@@ -120,6 +131,7 @@ export default function Assessments() {
 
           <TabsContent value="pending" className="mt-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {isLoading && <p className="text-sm text-muted-foreground">Loading pending quizzes...</p>}
               {pendingQuizzes.map((quiz) => (
                 <div key={quiz.id} className="healthcare-card">
                   <div className="flex items-start justify-between mb-3">
@@ -159,6 +171,11 @@ export default function Assessments() {
                   </tr>
                 </thead>
                 <tbody>
+                  {isLoading && (
+                    <tr>
+                      <td colSpan={6} className="text-sm text-muted-foreground py-4">Loading history...</td>
+                    </tr>
+                  )}
                   {quizHistory.map((quiz) => (
                     <tr key={quiz.id}>
                       <td className="font-medium text-foreground">{quiz.module}</td>

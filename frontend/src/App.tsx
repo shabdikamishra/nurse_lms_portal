@@ -15,10 +15,12 @@ import LiveClasses from "./pages/nurse/LiveClasses";
 import Assessments from "./pages/nurse/Assessments";
 import NurseCertifications from "./pages/nurse/Certifications";
 import NurseReports from "./pages/nurse/Reports";
+import QuizModule from "./pages/nurse/QuizModule";
 
 // Admin Pages
 import AdminCertifications from "./pages/admin/Certifications";
 import CourseLibrary from "./pages/admin/CourseLibrary";
+import ModulesPage from "./pages/admin/ModulesPage";
 import LearningScheduler from "./pages/admin/LearningScheduler";
 import UserManagement from "./pages/admin/UserManagement";
 import AdminReports from "./pages/admin/Reports";
@@ -47,10 +49,12 @@ const App = () => (
             <Route path="/assessments" element={<Assessments />} />
             <Route path="/certifications" element={<NurseCertifications />} />
             <Route path="/reports" element={<NurseReports />} />
+            <Route path="/quiz" element={<QuizModule />} />
             
             {/* Admin Routes */}
             <Route path="/admin/certifications" element={<AdminCertifications />} />
             <Route path="/course-library" element={<CourseLibrary />} />
+            <Route path="/modules-page" element={<ModulesPage />} />
             <Route path="/scheduler" element={<LearningScheduler />} />
             <Route path="/users" element={<UserManagement />} />
             <Route path="/admin/reports" element={<AdminReports />} />

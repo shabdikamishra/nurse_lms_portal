@@ -12,7 +12,6 @@ import {
   Calendar,
   BookOpen,
   ChevronRight,
-  X
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,15 +22,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
-const recentActivity = [
-  { id: 1, action: 'Sarah Johnson completed "Ventilator Management"', time: '2 hours ago', type: 'completion' },
-  { id: 2, action: 'James Wilson registered for "Pediatric Emergency Response"', time: '3 hours ago', type: 'registration' },
-  { id: 3, action: 'Maria Garcia\'s BLS certification expires in 7 days', time: '5 hours ago', type: 'warning' },
-  { id: 4, action: 'New module "Infection Control 2025" published', time: '1 day ago', type: 'publish' },
-  { id: 5, action: 'Robert Brown failed quiz "Medication Safety" - Retake required', time: '1 day ago', type: 'alert' },
-];
+const API_BASE_URL =
+  (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:4000';
 
 const activityIcons = {
   completion: { icon: Award, className: 'text-success bg-success/10' },
@@ -42,11 +36,40 @@ const activityIcons = {
 };
 
 export default function AdminDashboard() {
-  const { user } = useAuth();
+  const { user, authHeaders } = useAuth();
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
+  const [summary, setSummary] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    const loadSummary = async () => {
+      setIsLoading(true);
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/dashboard-summary`, {
+          headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(data?.message || 'Failed to load dashboard');
+        setSummary(data);
+      } catch (err) {
+        console.error(err);
+        setSummary(null);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    void loadSummary();
+  }, [authHeaders]);
 
   if (!user) return null;
+
+  const recentActivity = (summary?.recentActivity || []).map((a: any, idx: number) => ({
+    id: idx + 1,
+    action: `Quiz attempt: score ${a.score}/${a.totalQuestions || 0}`,
+    time: a.createdAt ? new Date(a.createdAt).toLocaleString() : 'Recent',
+    type: (a.totalQuestions && a.score / a.totalQuestions < 0.7) ? 'alert' : 'completion',
+  }));
 
   return (
     <DashboardLayout>
@@ -75,30 +98,29 @@ export default function AdminDashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatsCard
             title="Total Certified Nurses"
-            value="1,247"
-            subtitle="Active staff"
+            value={isLoading ? '...' : String(summary?.nursesCount ?? 0)}
+            subtitle="Active nurses"
             icon={Users}
             variant="primary"
-            trend={{ value: 12, isPositive: true }}
           />
           <StatsCard
             title="Certifications Due"
-            value="89"
+            value={isLoading ? '...' : String(summary?.expiringSoonCount ?? 0)}
             subtitle="Within 30 days"
             icon={Clock}
             variant="warning"
           />
           <StatsCard
             title="Non-Compliant"
-            value="23"
+            value={isLoading ? '...' : String(summary?.nonCompliantCount ?? 0)}
             subtitle="Requires action"
             icon={AlertTriangle}
             variant="destructive"
           />
           <StatsCard
-            title="Expiring Soon"
-            value="156"
-            subtitle="Within 90 days"
+            title="Completed This Month"
+            value={isLoading ? '...' : String(summary?.completedThisMonth ?? 0)}
+            subtitle="Progress updates"
             icon={Award}
             variant="default"
           />
@@ -113,7 +135,7 @@ export default function AdminDashboard() {
             </Button>
           </div>
           <div className="space-y-4">
-            {recentActivity.map((activity) => {
+            {(recentActivity.length ? recentActivity : [{ id: 0, action: 'No activity yet', time: '', type: 'publish' }]).map((activity) => {
               const { icon: Icon, className } = activityIcons[activity.type as keyof typeof activityIcons];
               return (
                 <div key={activity.id} className="flex items-start gap-3">

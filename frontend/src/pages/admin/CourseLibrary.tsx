@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,8 +16,6 @@ import {
   MoreHorizontal,
   Edit,
   Trash2,
-  ArrowUp,
-  ArrowDown,
 } from 'lucide-react';
 import {
   Dialog,
@@ -57,17 +56,11 @@ type CourseModule = {
 
 const questionBank: any[] = [];
 
-const stats = [
-  { label: 'Departments', value: 12, icon: FolderOpen, color: 'text-primary' },
-  { label: 'Total Modules', value: 156, icon: BookOpen, color: 'text-success' },
-  { label: 'Question Bank', value: 2450, icon: FileQuestion, color: 'text-warning' },
-  { label: 'Active Nurses', value: 1247, icon: Users, color: 'text-info' },
-];
-
 const API_BASE_URL =
   (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:4000';
 
 export default function CourseLibrary() {
+  const navigate = useNavigate();
   const { authHeaders, user } = useAuth();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [isLoadingDepartments, setIsLoadingDepartments] = useState(false);
@@ -100,6 +93,13 @@ export default function CourseLibrary() {
   const [moduleSaving, setModuleSaving] = useState(false);
   const [moduleError, setModuleError] = useState('');
   const [editingModule, setEditingModule] = useState<CourseModule | null>(null);
+  const [moduleTargetRole, setModuleTargetRole] = useState('');
+  const [moduleEstimatedDuration, setModuleEstimatedDuration] = useState('');
+  const [moduleLearningObjectives, setModuleLearningObjectives] = useState('');
+  const [moduleMode, setModuleMode] = useState('');
+  const [moduleLanguage, setModuleLanguage] = useState('');
+  const [moduleCertification, setModuleCertification] = useState('');
+  const [moduleContentFile, setModuleContentFile] = useState<File | null>(null);
 
   const [selectedModuleId, setSelectedModuleId] = useState<string>('');
   const selectedModule = useMemo(
@@ -139,6 +139,12 @@ export default function CourseLibrary() {
   const [contentSuccess, setContentSuccess] = useState('');
   const [isUploadingLesson, setIsUploadingLesson] = useState(false);
   const [isUploadingSop, setIsUploadingSop] = useState(false);
+  const [libraryStats, setLibraryStats] = useState({
+    departments: 0,
+    totalModules: 0,
+    questionBank: 0,
+    activeNurses: 0,
+  });
 
   const filteredDepartments = useMemo(() => {
     const q = deptSearch.trim().toLowerCase();
@@ -174,8 +180,27 @@ export default function CourseLibrary() {
     }
   };
 
+  const loadCourseLibraryStats = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/course-library-stats`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error('Failed to load stats');
+      const data = await res.json();
+      setLibraryStats({
+        departments: Number(data?.departments || 0),
+        totalModules: Number(data?.totalModules || 0),
+        questionBank: Number(data?.questionBank || 0),
+        activeNurses: Number(data?.activeNurses || 0),
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     void loadDepartments();
+    void loadCourseLibraryStats();
   }, []);
 
   const loadCourses = async (departmentId?: string) => {
@@ -302,6 +327,7 @@ export default function CourseLibrary() {
       } else {
         setDepartments((prev) => [data as Department, ...prev].sort((a, b) => a.name.localeCompare(b.name)));
       }
+      void loadCourseLibraryStats();
 
       setIsDeptDialogOpen(false);
       setDeptName('');
@@ -325,6 +351,7 @@ export default function CourseLibrary() {
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.message || 'Failed to delete department');
       setDepartments((prev) => prev.filter((d) => d._id !== dept._id));
+      void loadCourseLibraryStats();
     } catch (err: any) {
       alert(err?.message || 'Failed to delete department.');
     }
@@ -383,6 +410,7 @@ export default function CourseLibrary() {
       } else {
         setCourses((prev) => [data as Course, ...prev]);
       }
+      void loadCourseLibraryStats();
       setIsCourseDialogOpen(false);
     } catch (err: any) {
       setCourseError(err?.message || 'Failed to save course.');
@@ -402,6 +430,7 @@ export default function CourseLibrary() {
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.message || 'Failed to delete course');
       setCourses((prev) => prev.filter((c) => c._id !== course._id));
+      void loadCourseLibraryStats();
       if (selectedCourseId === course._id) {
         setSelectedCourseId('');
         setModules([]);
@@ -415,6 +444,13 @@ export default function CourseLibrary() {
     if (!selectedCourseId) return;
     setEditingModule(null);
     setModuleTitle('');
+    setModuleTargetRole('');
+    setModuleEstimatedDuration('');
+    setModuleLearningObjectives('');
+    setModuleMode('');
+    setModuleLanguage('');
+    setModuleCertification('');
+    setModuleContentFile(null);
     setModuleError('');
     setIsModuleDialogOpen(true);
   };
@@ -422,6 +458,13 @@ export default function CourseLibrary() {
   const openEditModule = (m: CourseModule) => {
     setEditingModule(m);
     setModuleTitle(m.title);
+    setModuleTargetRole('');
+    setModuleEstimatedDuration('');
+    setModuleLearningObjectives('');
+    setModuleMode('');
+    setModuleLanguage('');
+    setModuleCertification('');
+    setModuleContentFile(null);
     setModuleError('');
     setIsModuleDialogOpen(true);
   };
@@ -444,10 +487,21 @@ export default function CourseLibrary() {
       const url = editingModule
         ? `${API_BASE_URL}/api/modules/${editingModule._id}`
         : `${API_BASE_URL}/api/courses/${selectedCourseId}/modules`;
+      const formData = new FormData();
+      formData.append('title', title);
+      formData.append('targetRole', moduleTargetRole.trim());
+      formData.append('estimatedDuration', moduleEstimatedDuration.trim());
+      formData.append('learningObjectives', moduleLearningObjectives.trim());
+      formData.append('mode', moduleMode.trim());
+      formData.append('language', moduleLanguage.trim());
+      formData.append('certification', moduleCertification.trim());
+      if (moduleContentFile) {
+        formData.append('contentFile', moduleContentFile);
+      }
       const res = await fetch(url, {
         method: editingModule ? 'PUT' : 'POST',
-        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title }),
+        headers: authHeaders(),
+        body: formData,
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.message || 'Failed to save module');
@@ -457,6 +511,7 @@ export default function CourseLibrary() {
       } else {
         setModules((prev) => [...prev, data as CourseModule].sort((a, b) => a.order - b.order));
       }
+      void loadCourseLibraryStats();
       setIsModuleDialogOpen(false);
     } catch (err: any) {
       setModuleError(err?.message || 'Failed to save module.');
@@ -476,6 +531,7 @@ export default function CourseLibrary() {
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.message || 'Failed to delete module');
       setModules((prev) => prev.filter((x) => x._id !== m._id));
+      void loadCourseLibraryStats();
       if (selectedModuleId === m._id) {
         setSelectedModuleId('');
       }
@@ -615,7 +671,12 @@ export default function CourseLibrary() {
 
         {/* Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {stats.map((stat) => (
+          {[
+            { label: 'Departments', value: libraryStats.departments, icon: FolderOpen, color: 'text-primary' },
+            { label: 'Total Modules', value: libraryStats.totalModules, icon: BookOpen, color: 'text-success' },
+            { label: 'Question Bank', value: libraryStats.questionBank, icon: FileQuestion, color: 'text-warning' },
+            { label: 'Active Nurses', value: libraryStats.activeNurses, icon: Users, color: 'text-info' },
+          ].map((stat) => (
             <div key={stat.label} className="healthcare-card flex items-center gap-4">
               <div className={`w-10 h-10 rounded-lg bg-muted flex items-center justify-center ${stat.color}`}>
                 <stat.icon className="w-5 h-5" />
@@ -862,7 +923,7 @@ export default function CourseLibrary() {
                       <button
                         key={c._id}
                         type="button"
-                        onClick={() => setSelectedCourseId(c._id)}
+                        onClick={() => navigate(`/modules-page?courseId=${c._id}`)}
                         className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${
                           selectedCourseId === c._id
                             ? 'border-primary bg-primary/5'
@@ -885,6 +946,9 @@ export default function CourseLibrary() {
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => openEditCourse(c)}>
                                 <Edit className="w-4 h-4 mr-2" /> Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => navigate(`/modules-page?courseId=${c._id}`)}>
+                                <BookOpen className="w-4 h-4 mr-2" /> Manage Modules
                               </DropdownMenuItem>
                               <DropdownMenuItem className="text-destructive" onClick={() => deleteCourse(c)}>
                                 <Trash2 className="w-4 h-4 mr-2" /> Delete
@@ -933,6 +997,72 @@ export default function CourseLibrary() {
                             required
                           />
                         </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="space-y-2">
+                            <Label htmlFor="module-role">Target Role</Label>
+                            <Input
+                              id="module-role"
+                              value={moduleTargetRole}
+                              onChange={(e) => setModuleTargetRole(e.target.value)}
+                              placeholder="e.g., Staff Nurse"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="module-duration">Estimated Duration</Label>
+                            <Input
+                              id="module-duration"
+                              value={moduleEstimatedDuration}
+                              onChange={(e) => setModuleEstimatedDuration(e.target.value)}
+                              placeholder="e.g., 45 mins"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="module-objectives">Learning Objectives</Label>
+                            <Input
+                              id="module-objectives"
+                              value={moduleLearningObjectives}
+                              onChange={(e) => setModuleLearningObjectives(e.target.value)}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="module-mode">Mode</Label>
+                            <Input
+                              id="module-mode"
+                              value={moduleMode}
+                              onChange={(e) => setModuleMode(e.target.value)}
+                              placeholder="Online / Blended"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="module-language">Language</Label>
+                            <Input
+                              id="module-language"
+                              value={moduleLanguage}
+                              onChange={(e) => setModuleLanguage(e.target.value)}
+                              placeholder="English"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="module-certification">Certification</Label>
+                            <Input
+                              id="module-certification"
+                              value={moduleCertification}
+                              onChange={(e) => setModuleCertification(e.target.value)}
+                              placeholder="Optional"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="module-content-file">
+                            Upload Course Content (PDF, Video, SCORM, Text, MP4)
+                          </Label>
+                          <Input
+                            id="module-content-file"
+                            type="file"
+                            accept=".pdf,.txt,.zip,.scorm,video/*"
+                            onChange={(e) => setModuleContentFile(e.target.files?.[0] ?? null)}
+                          />
+                        </div>
 
                         {moduleError && (
                           <p className="text-sm text-destructive">{moduleError}</p>
@@ -978,36 +1108,6 @@ export default function CourseLibrary() {
                             </p>
                           </div>
                           <div className="flex items-center gap-1">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              disabled={idx === 0}
-                              onClick={() => {
-                                const next = arr.slice();
-                                const tmp = next[idx - 1];
-                                next[idx - 1] = next[idx];
-                                next[idx] = tmp;
-                                void reorderModules(next);
-                              }}
-                            >
-                              <ArrowUp className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              disabled={idx === arr.length - 1}
-                              onClick={() => {
-                                const next = arr.slice();
-                                const tmp = next[idx + 1];
-                                next[idx + 1] = next[idx];
-                                next[idx] = tmp;
-                                void reorderModules(next);
-                              }}
-                            >
-                              <ArrowDown className="w-4 h-4" />
-                            </Button>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -1029,164 +1129,10 @@ export default function CourseLibrary() {
                   </div>
                 )}
 
-                {/* Module Content */}
-                <div className="mt-6 pt-6 border-t border-border space-y-4">
-                  <div>
-                    <h4 className="font-semibold text-foreground">Module Content</h4>
-                    <p className="text-sm text-muted-foreground">
-                      {selectedModule ? `Module: ${selectedModule.title}` : 'Select a module above to manage Lessons and SOPs.'}
-                    </p>
-                  </div>
-
-                  {contentError && <p className="text-sm text-destructive">{contentError}</p>}
-                  {contentSuccess && <p className="text-sm text-emerald-600 dark:text-emerald-400">{contentSuccess}</p>}
-
-                  {selectedModuleId && user?.role === 'admin' && (
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                      <form onSubmit={uploadLesson} className="space-y-3 border border-border rounded-lg p-4">
-                        <h5 className="font-medium text-foreground">Upload Lesson (PDF/Video)</h5>
-                        <div className="space-y-2">
-                          <Label>Title</Label>
-                          <Input value={lessonTitle} onChange={(e) => setLessonTitle(e.target.value)} />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>File</Label>
-                          <Input
-                            type="file"
-                            accept="application/pdf,video/*"
-                            onChange={(e) => setLessonFile(e.target.files?.[0] ?? null)}
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            Supports PDF and video. Max size: {Number.isFinite(Number((import.meta as any).env?.VITE_MAX_UPLOAD_MB)) ? (import.meta as any).env.VITE_MAX_UPLOAD_MB : 'server-configured'}MB
-                          </p>
-                        </div>
-                        <Button type="submit" disabled={isUploadingLesson}>
-                          {isUploadingLesson ? 'Uploading...' : 'Upload Lesson'}
-                        </Button>
-                      </form>
-
-                      <form onSubmit={uploadSop} className="space-y-3 border border-border rounded-lg p-4">
-                        <h5 className="font-medium text-foreground">Upload SOP (PDF only)</h5>
-                        <div className="space-y-2">
-                          <Label>Title</Label>
-                          <Input value={sopTitle} onChange={(e) => setSopTitle(e.target.value)} />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>PDF File</Label>
-                          <Input
-                            type="file"
-                            accept="application/pdf"
-                            onChange={(e) => setSopFile(e.target.files?.[0] ?? null)}
-                          />
-                        </div>
-                        <Button type="submit" disabled={isUploadingSop}>
-                          {isUploadingSop ? 'Uploading...' : 'Upload SOP'}
-                        </Button>
-                      </form>
-                    </div>
-                  )}
-
-                  {selectedModuleId && (
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                      <div className="border border-border rounded-lg p-4">
-                        <h5 className="font-medium text-foreground mb-3">Lessons</h5>
-                        {isLoadingContent ? (
-                          <p className="text-sm text-muted-foreground">Loading...</p>
-                        ) : lessons.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">No lessons uploaded yet.</p>
-                        ) : (
-                          <div className="space-y-2">
-                            {lessons.map((l) => (
-                              <div key={l._id} className="flex items-center justify-between gap-3 border border-border rounded-md px-3 py-2">
-                                <div className="min-w-0">
-                                  <p className="text-sm font-medium text-foreground truncate">{l.title}</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    {l.type.toUpperCase()} • {new Date(l.createdAt).toLocaleString()}
-                                  </p>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <Button asChild variant="outline" size="sm">
-                                    <a
-                                      href={`${API_BASE_URL}${l.fileUrl}`}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        fetch(`${API_BASE_URL}${l.fileUrl}`, { headers: authHeaders() })
-                                          .then((r) => r.blob())
-                                          .then((blob) => {
-                                            const url = URL.createObjectURL(blob);
-                                            window.open(url, '_blank', 'noreferrer');
-                                          });
-                                      }}
-                                    >
-                                      View
-                                    </a>
-                                  </Button>
-                                  {user?.role === 'admin' && (
-                                    <Button variant="destructive" size="sm" onClick={() => deleteLesson(l._id)}>
-                                      Delete
-                                    </Button>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="border border-border rounded-lg p-4">
-                        <h5 className="font-medium text-foreground mb-3">SOPs</h5>
-                        {isLoadingContent ? (
-                          <p className="text-sm text-muted-foreground">Loading...</p>
-                        ) : sops.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">No SOPs uploaded yet.</p>
-                        ) : (
-                          <div className="space-y-2">
-                            {sops.map((s) => (
-                              <div key={s._id} className="flex items-center justify-between gap-3 border border-border rounded-md px-3 py-2">
-                                <div className="min-w-0">
-                                  <p className="text-sm font-medium text-foreground truncate">{s.title}</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    PDF • {new Date(s.createdAt).toLocaleString()}
-                                  </p>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <Button
-                                    asChild
-                                    variant="outline"
-                                    size="sm"
-                                  >
-                                    <a
-                                      href={`${API_BASE_URL}${s.fileUrl}`}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        fetch(`${API_BASE_URL}${s.fileUrl}`, { headers: authHeaders() })
-                                          .then((r) => r.blob())
-                                          .then((blob) => {
-                                            const url = URL.createObjectURL(blob);
-                                            window.open(url, '_blank', 'noreferrer');
-                                          });
-                                      }}
-                                    >
-                                      View
-                                    </a>
-                                  </Button>
-                                  {user?.role === 'admin' && (
-                                    <Button variant="destructive" size="sm" onClick={() => deleteSop(s._id)}>
-                                      Delete
-                                    </Button>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                <div className="mt-6 pt-6 border-t border-border">
+                  <p className="text-sm text-muted-foreground">
+                    Use <span className="font-medium text-foreground">Manage Modules</span> on a course to open the dedicated module management page.
+                  </p>
                 </div>
               </div>
             </div>

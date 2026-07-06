@@ -25,12 +25,12 @@ interface NavItem {
   title: string;
   href: string;
   icon: React.ElementType;
-  roles: ('nurse' | 'admin')[];
+  roles: ('nurse' | 'admin' | 'supervisor')[];
 }
 
 const navItems: NavItem[] = [
-  { title: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['nurse', 'admin'] },
-  { title: 'Assigned Modules', href: '/modules', icon: BookOpen, roles: ['nurse'] },
+  { title: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['nurse', 'admin', 'supervisor'] },
+  { title: 'My Courses', href: '/modules', icon: BookOpen, roles: ['nurse'] },
   { title: 'Live Classes', href: '/live-classes', icon: Video, roles: ['nurse'] },
   { title: 'Assessments', href: '/assessments', icon: ClipboardCheck, roles: ['nurse'] },
   { title: 'Certifications', href: '/certifications', icon: Award, roles: ['nurse'] },
@@ -38,11 +38,16 @@ const navItems: NavItem[] = [
   { title: 'Course Library', href: '/course-library', icon: Library, roles: ['admin'] },
   { title: 'Learning Scheduler', href: '/scheduler', icon: Calendar, roles: ['admin'] },
   { title: 'User Management', href: '/users', icon: Users, roles: ['admin'] },
+  { title: 'Register Nurse', href: '/admin/register-nurse', icon: UserPlus, roles: ['admin'] },
   { title: 'Assign Modules', href: '/admin/assign-modules', icon: UserPlus, roles: ['admin'] },
   { title: 'Reports', href: '/reports', icon: BarChart3, roles: ['nurse'] },
   { title: 'Reports', href: '/admin/reports', icon: BarChart3, roles: ['admin'] },
-  { title: 'Support', href: '/support', icon: HelpCircle, roles: ['nurse', 'admin'] },
-  { title: 'Change Password', href: '/change-password', icon: Lock, roles: ['nurse', 'admin'] },
+  { title: 'Pending Approvals', href: '/admin/pending-approvals', icon: ClipboardCheck, roles: ['admin'] },
+  { title: 'Course Library', href: '/supervisor/course-library', icon: Library, roles: ['supervisor'] },
+  { title: 'Register Nurse', href: '/supervisor/register-nurse', icon: UserPlus, roles: ['supervisor'] },
+  { title: 'Assign Modules', href: '/supervisor/assign-modules', icon: UserPlus, roles: ['supervisor'] },
+  { title: 'Support', href: '/support', icon: HelpCircle, roles: ['nurse', 'admin', 'supervisor'] },
+  { title: 'Change Password', href: '/change-password', icon: Lock, roles: ['nurse', 'admin', 'supervisor'] },
 ];
 
 export function AppSidebar() {

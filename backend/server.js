@@ -6,6 +6,20 @@ import mongoose from "mongoose";
 import multer from "multer";
 import { buildModuleRoutes } from "./routes/moduleRoutes.js";
 import {
+  isCoursePublished,
+  getCourseModulesOrdered,
+  getProgressMap,
+  getContentCountsByModule,
+  buildModuleProgressPayload,
+  getOrCreateProgress,
+  checkAndUpdateCompletion,
+  isModuleUnlockedForUser,
+  getLatestQuizAttemptCount,
+  computeProgressPercent,
+  deriveDisplayStatus,
+  isPreviousModuleCompleted,
+} from "./services/moduleProgressService.js";
+import {
   User,
   Department,
   Course,
@@ -18,7 +32,19 @@ import {
   Question,
   QuizAttempt,
   ModuleAssignment,
+  Notification,
+  AuditLog,
 } from "./schemas/models.js";
+import {
+  canManageCourse,
+  canManageDepartment,
+  resolveUserDepartmentId,
+  filterUsersByDepartment,
+} from "./services/courseAccessService.js";
+import {
+  notifyAdminsOfCourseSubmission,
+  notifySupervisorCourseDecision,
+} from "./services/notificationService.js";
 
 dotenv.config();
 
@@ -159,6 +185,33 @@ function requireAdmin() {
   };
 }
 
+function requireAdminOrSupervisor() {
+  return async (req, res, next) => {
+    try {
+      const user = await getRequestUser(req);
+      if (!user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      if (!["admin", "supervisor"].includes(user.role)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      req.user = user;
+      return next();
+    } catch (err) {
+      console.error("AdminOrSupervisor middleware error", err);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  };
+}
+
+function formatUserResponse(dbUser) {
+  const { password: _pw, ...rest } = dbUser;
+  return {
+    ...rest,
+    id: String(rest._id),
+  };
+}
+
 async function isEnrolledInCourse(userId, courseId) {
   if (!userId || !courseId) return false;
   const exists = await Enrollment.exists({ userId, courseId });
@@ -170,23 +223,55 @@ async function getCourseIdForModule(moduleId) {
   return mod?.courseId ? String(mod.courseId) : null;
 }
 
+async function assertCanEditModule(req, res, moduleId) {
+  const mod = await Module.findById(moduleId).lean().exec();
+  if (!mod) {
+    res.status(404).json({ message: "Module not found" });
+    return null;
+  }
+  const { ok, course } = await canManageCourse(req.user, String(mod.courseId));
+  if (!ok || !course) {
+    res.status(403).json({ message: "Forbidden" });
+    return null;
+  }
+  if (
+    req.user.role === "supervisor" &&
+    !["DRAFT", "REJECTED"].includes(course.status)
+  ) {
+    res.status(403).json({
+      message: "Course cannot be edited while pending approval or published",
+    });
+    return null;
+  }
+  return mod;
+}
+
 async function canAccessModuleContent(reqUser, moduleId) {
   if (!reqUser) return false;
-  if (reqUser.role === "admin") return true;
-  const assigned = await ModuleAssignment.exists({
-    nurseId: reqUser._id,
-    moduleId,
-  });
-  if (assigned) return true;
-  const courseId = await getCourseIdForModule(moduleId);
-  if (!courseId) return false;
-  return isEnrolledInCourse(reqUser._id, courseId);
+  if (reqUser.role === "admin" || reqUser.role === "supervisor") return true;
+
+  const mod = await Module.findById(moduleId).lean().exec();
+  if (!mod) return false;
+
+  const course = await Course.findById(mod.courseId).lean().exec();
+  if (!course || !isCoursePublished(course)) return false;
+
+  const enrolled = await isEnrolledInCourse(reqUser._id, mod.courseId);
+  if (!enrolled) return false;
+
+  return isModuleUnlockedForUser(reqUser._id, moduleId);
 }
 
 function mapAssignmentStatusToProgress(status) {
-  if (status === "COMPLETED") return { status: "completed", percent: 100 };
-  if (status === "IN_PROGRESS") return { status: "in-progress", percent: 50 };
-  return { status: "not-started", percent: 0 };
+  if (status === "COMPLETED") return { status: "COMPLETED", percent: 100 };
+  if (status === "IN_PROGRESS") return { status: "IN_PROGRESS", percent: 50 };
+  return { status: "NOT_STARTED", percent: 0 };
+}
+
+function normalizeProgressStatus(status) {
+  if (status === "completed" || status === "COMPLETED") return "COMPLETED";
+  if (status === "in-progress" || status === "IN_PROGRESS") return "IN_PROGRESS";
+  return "NOT_STARTED";
 }
 
 // Auth login
@@ -213,9 +298,8 @@ app.post("/api/auth/login", (req, res) => {
           .json({ message: "Invalid email or password" });
       }
 
-      const { password: _pw, ...userWithoutPassword } = dbUser;
       const token = "session-token";
-      return res.json({ user: userWithoutPassword, token });
+      return res.json({ user: formatUserResponse(dbUser), token });
     })
     .catch((err) => {
       console.error("Error during login", err);
@@ -270,7 +354,7 @@ app.post("/api/auth/bootstrap-admin", async (req, res) => {
 // Admin - create user with demo password
 app.post("/api/admin/users", requireAdmin(), async (req, res) => {
   try {
-    const { email, name, empId, department, role } = req.body || {};
+    const { email, name, empId, department, departmentId, role } = req.body || {};
 
     const normalizedEmail =
       typeof email === "string" ? email.trim().toLowerCase() : "";
@@ -279,7 +363,7 @@ app.post("/api/admin/users", requireAdmin(), async (req, res) => {
       !normalizedEmail ||
       !name ||
       !empId ||
-      !department
+      (!department && !departmentId)
     ) {
       return res.status(400).json({
         message: "Email, name, EmpID, and department are required",
@@ -293,6 +377,33 @@ app.post("/api/admin/users", requireAdmin(), async (req, res) => {
         .json({ message: "A user with this email already exists" });
     }
 
+    let resolvedDepartmentId = departmentId || null;
+    let departmentName =
+      typeof department === "string" ? department.trim() : "";
+    if (resolvedDepartmentId) {
+      const dept = await Department.findById(resolvedDepartmentId).lean().exec();
+      if (!dept) {
+        return res.status(400).json({ message: "Invalid departmentId" });
+      }
+      departmentName = dept.name;
+    } else if (departmentName) {
+      const dept = await Department.findOne({ name: departmentName }).exec();
+      if (dept) resolvedDepartmentId = dept._id;
+    }
+
+    const normalizedRole =
+      role === "admin"
+        ? "admin"
+        : role === "supervisor"
+          ? "supervisor"
+          : "nurse";
+
+    if (normalizedRole === "supervisor" && !resolvedDepartmentId) {
+      return res.status(400).json({
+        message: "Supervisors must be assigned to a valid department",
+      });
+    }
+
     // Use a simple configurable demo password; can be changed later by the user
     const defaultPassword =
       process.env.DEFAULT_USER_PASSWORD || "demo1234";
@@ -301,8 +412,9 @@ app.post("/api/admin/users", requireAdmin(), async (req, res) => {
       email: normalizedEmail,
       name: name.trim(),
       empId: empId.trim(),
-      department: department.trim(),
-      role: role === "admin" ? "admin" : "nurse",
+      department: departmentName,
+      departmentId: resolvedDepartmentId,
+      role: normalizedRole,
       password: defaultPassword,
     });
 
@@ -338,15 +450,47 @@ app.get("/api/admin/users", requireAdmin(), async (req, res) => {
   }
 });
 
-app.get("/api/admin/course-library-stats", requireAdmin(), async (req, res) => {
+app.get("/api/admin/course-library-stats", requireAdminOrSupervisor(), async (req, res) => {
   try {
+    let courseFilter = {};
+    let nurseFilter = { role: "nurse" };
+    if (req.user.role === "supervisor") {
+      const deptId = await resolveUserDepartmentId(req.user);
+      if (!deptId) {
+        return res.json({
+          departments: 1,
+          totalModules: 0,
+          questionBank: 0,
+          activeNurses: 0,
+          courses: 0,
+        });
+      }
+      courseFilter = { departmentId: deptId };
+      nurseFilter = await filterUsersByDepartment(req.user, { role: "nurse" });
+    }
+
+    const courseIds = (
+      await Course.find(courseFilter).select({ _id: 1 }).lean().exec()
+    ).map((c) => c._id);
+
     const [departmentsCount, coursesCount, modulesCount, questionsCount, activeNurses] =
       await Promise.all([
-        Department.countDocuments({}),
-        Course.countDocuments({}),
-        Module.countDocuments({}),
-        Question.countDocuments({}),
-        User.countDocuments({ role: "nurse" }),
+        req.user.role === "admin"
+          ? Department.countDocuments({})
+          : Promise.resolve(1),
+        Course.countDocuments(courseFilter),
+        Module.countDocuments({ courseId: { $in: courseIds } }),
+        Question.countDocuments({
+          moduleId: {
+            $in: (
+              await Module.find({ courseId: { $in: courseIds } })
+                .select({ _id: 1 })
+                .lean()
+                .exec()
+            ).map((m) => m._id),
+          },
+        }),
+        User.countDocuments(nurseFilter),
       ]);
 
     return res.json({
@@ -408,10 +552,10 @@ app.get("/api/admin/reports/module-progress", requireAdmin(), async (req, res) =
           let completedModules = 0;
           for (const moduleId of moduleIds) {
             const progress = progressByUserAndModule.get(`${String(nurse._id)}:${moduleId}`);
-            if (progress && (progress.status === "completed" || Number(progress.percent || 0) > 0)) {
+            if (progress && (normalizeProgressStatus(progress.status) === "COMPLETED" || Number(progress.percent || 0) > 0)) {
               coveredModules += 1;
             }
-            if (progress && progress.status === "completed") {
+            if (progress && normalizeProgressStatus(progress.status) === "COMPLETED") {
               completedModules += 1;
             }
           }
@@ -483,10 +627,10 @@ app.get("/api/reports/my-module-progress", requireAuth(), async (req, res) => {
 
       for (const moduleId of moduleIds) {
         const progress = progressByModuleId.get(moduleId);
-        if (progress && (progress.status === "completed" || Number(progress.percent || 0) > 0)) {
+        if (progress && (normalizeProgressStatus(progress.status) === "COMPLETED" || Number(progress.percent || 0) > 0)) {
           coveredModules += 1;
         }
-        if (progress && progress.status === "completed") {
+        if (progress && normalizeProgressStatus(progress.status) === "COMPLETED") {
           completedModules += 1;
         }
       }
@@ -527,12 +671,13 @@ app.get("/api/admin/dashboard-summary", requireAdmin(), async (req, res) => {
     const next30 = new Date(now);
     next30.setDate(now.getDate() + 30);
 
-    const [nursesCount, coursesCount, modulesCount, questionsCount, latestAttempts] =
+    const [nursesCount, coursesCount, modulesCount, questionsCount, pendingApprovals, latestAttempts] =
       await Promise.all([
         User.countDocuments({ role: "nurse" }),
         Course.countDocuments({}),
         Module.countDocuments({}),
         Question.countDocuments({}),
+        Course.countDocuments({ status: "PENDING_APPROVAL" }),
         QuizAttempt.find({})
           .sort({ createdAt: -1 })
           .limit(10)
@@ -540,7 +685,7 @@ app.get("/api/admin/dashboard-summary", requireAdmin(), async (req, res) => {
           .exec(),
       ]);
 
-    const completionDocs = await Progress.find({ status: "completed" })
+    const completionDocs = await Progress.find({ status: "COMPLETED" })
       .select({ userId: 1, moduleId: 1, updatedAt: 1 })
       .lean()
       .exec();
@@ -576,6 +721,7 @@ app.get("/api/admin/dashboard-summary", requireAdmin(), async (req, res) => {
       coursesCount,
       modulesCount,
       questionsCount,
+      pendingApprovals,
       nonCompliantCount,
       completedThisMonth,
       expiringSoonCount: 0,
@@ -590,39 +736,95 @@ app.get("/api/admin/dashboard-summary", requireAdmin(), async (req, res) => {
 app.get("/api/nurse/dashboard-summary", requireAuth(), async (req, res) => {
   try {
     const current = req.user;
-    const [assignments, attempts] = await Promise.all([
-      ModuleAssignment.find({ nurseId: current._id })
-        .select({ moduleId: 1, status: 1 })
+    const enrollments = await Enrollment.find({ userId: current._id })
+      .select({ courseId: 1 })
+      .lean()
+      .exec();
+    const courseIds = enrollments.map((e) => e.courseId);
+
+    const [courses, modules, progressDocs, attempts] = await Promise.all([
+      Course.find({
+        _id: { $in: courseIds },
+        status: "PUBLISHED",
+      })
+        .select({ _id: 1 })
+        .lean()
+        .exec(),
+      Module.find({ courseId: { $in: courseIds } })
+        .select({ _id: 1, courseId: 1 })
+        .lean()
+        .exec(),
+      Progress.find({ userId: current._id })
+        .select({ moduleId: 1, status: 1, quizPassed: 1 })
         .lean()
         .exec(),
       QuizAttempt.find({ userId: current._id }).lean().exec(),
     ]);
 
-    const totalModules = assignments.length;
-    const completedModules = assignments.filter(
-      (a) => a.status === "COMPLETED"
-    ).length;
-    const inProgressModules = assignments.filter(
-      (a) => a.status === "IN_PROGRESS"
-    ).length;
+    const publishedCourseIds = new Set(courses.map((c) => String(c._id)));
+    const relevantModules = modules.filter((m) =>
+      publishedCourseIds.has(String(m.courseId))
+    );
+    const progressByModule = new Map(
+      progressDocs.map((p) => [String(p.moduleId), p])
+    );
+
+    const totalModules = relevantModules.length;
+    const completedModules = relevantModules.filter((m) => {
+      const p = progressByModule.get(String(m._id));
+      return normalizeProgressStatus(p?.status) === "COMPLETED";
+    }).length;
+    const inProgressModules = relevantModules.filter((m) => {
+      const p = progressByModule.get(String(m._id));
+      return normalizeProgressStatus(p?.status) === "IN_PROGRESS";
+    }).length;
 
     const avgQuizScore = attempts.length
       ? Math.round(
           attempts.reduce((sum, a) => {
             const total = Number(a.totalQuestions || 0);
-            const pct = total ? Math.round((Number(a.score || 0) / total) * 100) : 0;
+            const pct = total
+              ? Math.round((Number(a.score || 0) / total) * 100)
+              : Number(a.percent || 0);
             return sum + pct;
           }, 0) / attempts.length
         )
       : 0;
 
+    const registeredCourses = courses.length;
+    const courseSummaries = await Promise.all(
+      courses.map(async (course) => {
+        const courseModules = relevantModules.filter(
+          (m) => String(m.courseId) === String(course._id)
+        );
+        const completed = courseModules.filter((m) => {
+          const p = progressByModule.get(String(m._id));
+          return normalizeProgressStatus(p?.status) === "COMPLETED";
+        }).length;
+        const progressPercent = courseModules.length
+          ? Math.round((completed / courseModules.length) * 100)
+          : 0;
+        return {
+          courseId: course._id,
+          progressPercent,
+          completedModules: completed,
+          totalModules: courseModules.length,
+        };
+      })
+    );
+
     return res.json({
+      registeredCourses,
       totalModules,
       completedModules,
       inProgressModules,
-      notStartedModules: Math.max(totalModules - completedModules - inProgressModules, 0),
+      notStartedModules: Math.max(
+        totalModules - completedModules - inProgressModules,
+        0
+      ),
       avgQuizScore,
       attemptsCount: attempts.length,
+      courses: courseSummaries,
     });
   } catch (err) {
     console.error("Error fetching nurse dashboard summary", err);
@@ -693,7 +895,7 @@ app.get("/api/nurse/assessments/overview", requireAuth(), async (req, res) => {
         module: moduleById.get(String(a.moduleId))?.title || "Module",
         quiz: "Module Assessment",
         score: scorePct,
-        status: scorePct >= 70 ? "passed" : "failed",
+        status: scorePct >= (a.passingPercentage ?? 70) ? "passed" : "failed",
         date: a.createdAt,
       };
     });
@@ -796,6 +998,22 @@ app.get("/api/courses", requireAuth(), async (req, res) => {
   try {
     const { departmentId } = req.query;
     const query = departmentId ? { departmentId } : {};
+
+    if (req.user.role === "nurse") {
+      query.status = "PUBLISHED";
+    } else if (req.user.role === "supervisor") {
+      const userDeptId = await resolveUserDepartmentId(req.user);
+      if (!userDeptId) {
+        return res.json([]);
+      }
+      query.departmentId = userDeptId;
+    } else if (departmentId && req.user.role === "supervisor") {
+      const allowed = await canManageDepartment(req.user, departmentId);
+      if (!allowed) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+    }
+
     const courses = await Course.find(query)
       .sort({ createdAt: -1 })
       .lean()
@@ -813,6 +1031,13 @@ app.get("/api/courses/:id", requireAuth(), async (req, res) => {
     if (!course) {
       return res.status(404).json({ message: "Course not found" });
     }
+    if (req.user.role === "supervisor") {
+      const { ok } = await canManageCourse(req.user, req.params.id);
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
+    }
+    if (req.user.role === "nurse" && course.status !== "PUBLISHED") {
+      return res.status(403).json({ message: "Forbidden" });
+    }
     res.json(course);
   } catch (err) {
     console.error("Error fetching course", err);
@@ -820,23 +1045,40 @@ app.get("/api/courses/:id", requireAuth(), async (req, res) => {
   }
 });
 
-app.post("/api/courses", requireAdmin(), async (req, res) => {
+app.post("/api/courses", requireAdminOrSupervisor(), async (req, res) => {
   try {
-    const { departmentId, title, description } = req.body || {};
+    let { departmentId, title, description } = req.body || {};
     const trimmedTitle = typeof title === "string" ? title.trim() : "";
+
+    if (req.user.role === "supervisor") {
+      departmentId = await resolveUserDepartmentId(req.user);
+      if (!departmentId) {
+        return res.status(400).json({ message: "Supervisor has no department assigned" });
+      }
+    }
+
     if (!departmentId || !trimmedTitle) {
       return res
         .status(400)
         .json({ message: "departmentId and title are required" });
     }
+
+    const allowed = await canManageDepartment(req.user, departmentId);
+    if (!allowed) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
     const deptExists = await Department.exists({ _id: departmentId });
     if (!deptExists) {
       return res.status(400).json({ message: "Invalid departmentId" });
     }
+
     const created = await Course.create({
       departmentId,
       title: trimmedTitle,
       description: typeof description === "string" ? description.trim() : "",
+      status: "DRAFT",
+      createdBy: req.user._id,
     });
     res.status(201).json(created);
   } catch (err) {
@@ -845,11 +1087,24 @@ app.post("/api/courses", requireAdmin(), async (req, res) => {
   }
 });
 
-app.put("/api/courses/:id", requireAdmin(), async (req, res) => {
+app.put("/api/courses/:id", requireAdminOrSupervisor(), async (req, res) => {
   try {
+    const { ok, course } = await canManageCourse(req.user, req.params.id);
+    if (!ok || !course) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    if (
+      req.user.role === "supervisor" &&
+      !["DRAFT", "REJECTED"].includes(course.status)
+    ) {
+      return res.status(403).json({
+        message: "Course cannot be edited while pending approval or published",
+      });
+    }
+
     const { departmentId, title, description } = req.body || {};
     const update = {};
-    if (departmentId) {
+    if (departmentId && req.user.role === "admin") {
       const deptExists = await Department.exists({ _id: departmentId });
       if (!deptExists) {
         return res.status(400).json({ message: "Invalid departmentId" });
@@ -882,8 +1137,16 @@ app.put("/api/courses/:id", requireAdmin(), async (req, res) => {
   }
 });
 
-app.delete("/api/courses/:id", requireAdmin(), async (req, res) => {
+app.delete("/api/courses/:id", requireAdminOrSupervisor(), async (req, res) => {
   try {
+    const { ok, course } = await canManageCourse(req.user, req.params.id);
+    if (!ok || !course) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    if (req.user.role === "supervisor" && course.status === "PUBLISHED") {
+      return res.status(403).json({ message: "Cannot delete published courses" });
+    }
+
     const courseId = req.params.id;
     const moduleCount = await Module.countDocuments({ courseId });
     if (moduleCount > 0) {
@@ -902,11 +1165,356 @@ app.delete("/api/courses/:id", requireAdmin(), async (req, res) => {
   }
 });
 
+app.patch("/api/courses/:id/publish", requireAdmin(), async (req, res) => {
+  try {
+    const course = await Course.findById(req.params.id).lean().exec();
+    if (!course) {
+      return res.status(404).json({ message: "Course not found" });
+    }
+    if (course.status === "PENDING_APPROVAL") {
+      return res.status(400).json({
+        message: "Use the approval workflow for supervisor-submitted courses",
+      });
+    }
+    const updated = await Course.findByIdAndUpdate(
+      req.params.id,
+      {
+        status: "PUBLISHED",
+        publishedAt: new Date(),
+        approvedBy: req.user._id,
+        approvalDate: new Date(),
+      },
+      { new: true }
+    )
+      .lean()
+      .exec();
+    res.json(updated);
+  } catch (err) {
+    console.error("Error publishing course", err);
+    res.status(500).json({ message: "Failed to publish course" });
+  }
+});
+
+app.patch("/api/courses/:id/draft", requireAdmin(), async (req, res) => {
+  try {
+    const updated = await Course.findByIdAndUpdate(
+      req.params.id,
+      { status: "DRAFT", publishedAt: null },
+      { new: true }
+    )
+      .lean()
+      .exec();
+    if (!updated) {
+      return res.status(404).json({ message: "Course not found" });
+    }
+    res.json(updated);
+  } catch (err) {
+    console.error("Error saving course draft", err);
+    res.status(500).json({ message: "Failed to save course draft" });
+  }
+});
+
+app.patch(
+  "/api/courses/:id/submit-approval",
+  requireAdminOrSupervisor(),
+  async (req, res) => {
+    try {
+      if (req.user.role === "admin") {
+        return res.status(403).json({
+          message: "Admins publish courses directly; supervisors submit for approval",
+        });
+      }
+      const { ok, course } = await canManageCourse(req.user, req.params.id);
+      if (!ok || !course) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      if (!["DRAFT", "REJECTED"].includes(course.status)) {
+        return res.status(400).json({
+          message: "Only draft or rejected courses can be submitted for approval",
+        });
+      }
+
+      const updated = await Course.findByIdAndUpdate(
+        req.params.id,
+        {
+          status: "PENDING_APPROVAL",
+          submittedAt: new Date(),
+          rejectionReason: "",
+        },
+        { new: true }
+      )
+        .lean()
+        .exec();
+
+      await notifyAdminsOfCourseSubmission(updated, req.user);
+      await AuditLog.create({
+        action: "COURSE_SUBMITTED",
+        courseId: updated._id,
+        performedBy: req.user._id,
+        details: { title: updated.title },
+      });
+
+      res.json(updated);
+    } catch (err) {
+      console.error("Error submitting course for approval", err);
+      res.status(500).json({ message: "Failed to submit course for approval" });
+    }
+  }
+);
+
+app.get("/api/admin/pending-courses", requireAdmin(), async (req, res) => {
+  try {
+    const courses = await Course.find({ status: "PENDING_APPROVAL" })
+      .sort({ submittedAt: -1, createdAt: -1 })
+      .lean()
+      .exec();
+
+    const creatorIds = [
+      ...new Set(courses.map((c) => String(c.createdBy)).filter(Boolean)),
+    ];
+    const deptIds = [
+      ...new Set(courses.map((c) => String(c.departmentId)).filter(Boolean)),
+    ];
+
+    const [creators, departments] = await Promise.all([
+      User.find({ _id: { $in: creatorIds } })
+        .select("name email department")
+        .lean()
+        .exec(),
+      Department.find({ _id: { $in: deptIds } })
+        .select("name")
+        .lean()
+        .exec(),
+    ]);
+
+    const creatorMap = new Map(creators.map((u) => [String(u._id), u]));
+    const deptMap = new Map(departments.map((d) => [String(d._id), d]));
+
+    const rows = courses.map((course) => {
+      const supervisor = creatorMap.get(String(course.createdBy));
+      const dept = deptMap.get(String(course.departmentId));
+      return {
+        ...course,
+        supervisorName: supervisor?.name || "Unknown",
+        supervisorEmail: supervisor?.email || "",
+        departmentName: dept?.name || "",
+      };
+    });
+
+    res.json(rows);
+  } catch (err) {
+    console.error("Error fetching pending courses", err);
+    res.status(500).json({ message: "Failed to fetch pending courses" });
+  }
+});
+
+app.patch("/api/admin/courses/:id/approve", requireAdmin(), async (req, res) => {
+  try {
+    const course = await Course.findById(req.params.id).exec();
+    if (!course) {
+      return res.status(404).json({ message: "Course not found" });
+    }
+    if (course.status !== "PENDING_APPROVAL") {
+      return res.status(400).json({ message: "Course is not pending approval" });
+    }
+
+    course.status = "PUBLISHED";
+    course.publishedAt = new Date();
+    course.approvedBy = req.user._id;
+    course.approvalDate = new Date();
+    course.rejectionReason = "";
+    await course.save();
+
+    await notifySupervisorCourseDecision(
+      course.toObject(),
+      course.createdBy,
+      true
+    );
+    await AuditLog.create({
+      action: "COURSE_APPROVED",
+      courseId: course._id,
+      performedBy: req.user._id,
+      targetUserId: course.createdBy,
+      details: { title: course.title },
+    });
+
+    res.json({
+      message: "Course approved successfully.",
+      course: course.toObject(),
+    });
+  } catch (err) {
+    console.error("Error approving course", err);
+    res.status(500).json({ message: "Failed to approve course" });
+  }
+});
+
+app.patch("/api/admin/courses/:id/reject", requireAdmin(), async (req, res) => {
+  try {
+    const { rejectionReason } = req.body || {};
+    const reason =
+      typeof rejectionReason === "string" ? rejectionReason.trim() : "";
+
+    const course = await Course.findById(req.params.id).exec();
+    if (!course) {
+      return res.status(404).json({ message: "Course not found" });
+    }
+    if (course.status !== "PENDING_APPROVAL") {
+      return res.status(400).json({ message: "Course is not pending approval" });
+    }
+
+    course.status = "REJECTED";
+    course.rejectionReason = reason;
+    course.publishedAt = null;
+    await course.save();
+
+    await notifySupervisorCourseDecision(
+      course.toObject(),
+      course.createdBy,
+      false,
+      reason
+    );
+    await AuditLog.create({
+      action: "COURSE_REJECTED",
+      courseId: course._id,
+      performedBy: req.user._id,
+      targetUserId: course.createdBy,
+      details: { title: course.title, rejectionReason: reason },
+    });
+
+    res.json({
+      message: "Course rejected.",
+      course: course.toObject(),
+    });
+  } catch (err) {
+    console.error("Error rejecting course", err);
+    res.status(500).json({ message: "Failed to reject course" });
+  }
+});
+
+app.get("/api/notifications", requireAuth(), async (req, res) => {
+  try {
+    const notifications = await Notification.find({ userId: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean()
+      .exec();
+    res.json(notifications);
+  } catch (err) {
+    console.error("Error fetching notifications", err);
+    res.status(500).json({ message: "Failed to fetch notifications" });
+  }
+});
+
+app.get("/api/notifications/unread-count", requireAuth(), async (req, res) => {
+  try {
+    const count = await Notification.countDocuments({
+      userId: req.user._id,
+      read: false,
+    }).exec();
+    res.json({ count });
+  } catch (err) {
+    console.error("Error counting notifications", err);
+    res.status(500).json({ message: "Failed to count notifications" });
+  }
+});
+
+app.patch("/api/notifications/:id/read", requireAuth(), async (req, res) => {
+  try {
+    const updated = await Notification.findOneAndUpdate(
+      { _id: req.params.id, userId: req.user._id },
+      { read: true },
+      { new: true }
+    )
+      .lean()
+      .exec();
+    if (!updated) {
+      return res.status(404).json({ message: "Notification not found" });
+    }
+    res.json(updated);
+  } catch (err) {
+    console.error("Error marking notification read", err);
+    res.status(500).json({ message: "Failed to update notification" });
+  }
+});
+
+app.patch("/api/notifications/read-all", requireAuth(), async (req, res) => {
+  try {
+    await Notification.updateMany(
+      { userId: req.user._id, read: false },
+      { read: true }
+    ).exec();
+    res.json({ message: "All notifications marked as read" });
+  } catch (err) {
+    console.error("Error marking all notifications read", err);
+    res.status(500).json({ message: "Failed to update notifications" });
+  }
+});
+
+app.get("/api/supervisor/dashboard-summary", requireAdminOrSupervisor(), async (req, res) => {
+  try {
+    if (req.user.role !== "supervisor") {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    const deptId = await resolveUserDepartmentId(req.user);
+    if (!deptId) {
+      return res.json({
+        departmentName: req.user.department,
+        nurses: 0,
+        courses: { draft: 0, pending: 0, published: 0, rejected: 0 },
+        pendingApprovals: 0,
+      });
+    }
+
+    const dept = await Department.findById(deptId).lean().exec();
+    const nurseQuery = await filterUsersByDepartment(req.user, {});
+    const [nurseCount, courses] = await Promise.all([
+      User.countDocuments(nurseQuery).exec(),
+      Course.find({ departmentId: deptId }).lean().exec(),
+    ]);
+
+    const stats = { draft: 0, pending: 0, published: 0, rejected: 0 };
+    for (const c of courses) {
+      if (c.status === "DRAFT") stats.draft += 1;
+      else if (c.status === "PENDING_APPROVAL") stats.pending += 1;
+      else if (c.status === "PUBLISHED") stats.published += 1;
+      else if (c.status === "REJECTED") stats.rejected += 1;
+    }
+
+    res.json({
+      departmentName: dept?.name || req.user.department,
+      nurses: nurseCount,
+      courses: stats,
+      pendingApprovals: stats.pending,
+    });
+  } catch (err) {
+    console.error("Error loading supervisor dashboard", err);
+    res.status(500).json({ message: "Failed to load supervisor dashboard" });
+  }
+});
+
+app.get("/api/supervisor/users", requireAdminOrSupervisor(), async (req, res) => {
+  try {
+    if (req.user.role !== "supervisor") {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    const query = await filterUsersByDepartment(req.user, { role: "nurse" });
+    const users = await User.find(query)
+      .select("-password")
+      .sort({ name: 1 })
+      .lean()
+      .exec();
+    res.json(users);
+  } catch (err) {
+    console.error("Error fetching supervisor users", err);
+    res.status(500).json({ message: "Failed to fetch users" });
+  }
+});
+
 app.use(
   "/api",
   buildModuleRoutes({
     requireAuth,
-    requireAdmin,
+    requireAdmin: requireAdminOrSupervisor,
     moduleContentUpload,
   })
 );
@@ -1000,10 +1608,13 @@ app.get("/api/modules/:moduleId/lessons", requireAuth(), async (req, res) => {
 
 app.post(
   "/api/modules/:moduleId/lessons",
-  requireAdmin(),
+  requireAdminOrSupervisor(),
   lessonUpload.single("file"),
   async (req, res) => {
     try {
+      const mod = await assertCanEditModule(req, res, req.params.moduleId);
+      if (!mod) return;
+
       const { title } = req.body || {};
       if (!req.file) {
         return res.status(400).json({ message: "File is required" });
@@ -1011,10 +1622,6 @@ app.post(
       const trimmedTitle = typeof title === "string" ? title.trim() : "";
       if (!trimmedTitle) {
         return res.status(400).json({ message: "Title is required" });
-      }
-      const moduleExists = await Module.exists({ _id: req.params.moduleId });
-      if (!moduleExists) {
-        return res.status(400).json({ message: "Invalid moduleId" });
       }
 
       const type = req.file.mimetype === "application/pdf" ? "pdf" : "video";
@@ -1047,10 +1654,12 @@ app.post(
   }
 );
 
-app.delete("/api/lessons/:id", requireAdmin(), async (req, res) => {
+app.delete("/api/lessons/:id", requireAdminOrSupervisor(), async (req, res) => {
   try {
     const lesson = await Lesson.findById(req.params.id).lean().exec();
     if (!lesson) return res.status(404).json({ message: "Lesson not found" });
+    const mod = await assertCanEditModule(req, res, String(lesson.moduleId));
+    if (!mod) return;
     await Lesson.deleteOne({ _id: lesson._id });
     res.json({ message: "Lesson deleted" });
   } catch (err) {
@@ -1147,10 +1756,13 @@ app.get("/api/modules/:moduleId/sops", requireAuth(), async (req, res) => {
 
 app.post(
   "/api/modules/:moduleId/sops",
-  requireAdmin(),
+  requireAdminOrSupervisor(),
   sopPdfUpload.single("file"),
   async (req, res) => {
     try {
+      const mod = await assertCanEditModule(req, res, req.params.moduleId);
+      if (!mod) return;
+
       const { title } = req.body || {};
       if (!req.file) {
         return res.status(400).json({ message: "File is required" });
@@ -1158,10 +1770,6 @@ app.post(
       const trimmedTitle = typeof title === "string" ? title.trim() : "";
       if (!trimmedTitle) {
         return res.status(400).json({ message: "Title is required" });
-      }
-      const moduleExists = await Module.exists({ _id: req.params.moduleId });
-      if (!moduleExists) {
-        return res.status(400).json({ message: "Invalid moduleId" });
       }
 
       const created = await SOP.create({
@@ -1188,10 +1796,12 @@ app.post(
   }
 );
 
-app.delete("/api/sops/:id", requireAdmin(), async (req, res) => {
+app.delete("/api/sops/:id", requireAdminOrSupervisor(), async (req, res) => {
   try {
     const sop = await SOP.findById(req.params.id).lean().exec();
     if (!sop) return res.status(404).json({ message: "SOP not found" });
+    const mod = await assertCanEditModule(req, res, String(sop.moduleId));
+    if (!mod) return;
     await SOP.deleteOne({ _id: sop._id });
     res.json({ message: "SOP deleted" });
   } catch (err) {
@@ -1222,37 +1832,245 @@ app.get("/api/sops/:id/download", requireAuth(), async (req, res) => {
 });
 
 // Admin - enroll user into course
-app.post("/api/admin/enrollments", requireAdmin(), async (req, res) => {
+app.post("/api/admin/enrollments", requireAdminOrSupervisor(), async (req, res) => {
   try {
-    const { userEmail, courseId } = req.body || {};
-    const normalizedEmail =
-      typeof userEmail === "string" ? userEmail.trim().toLowerCase() : "";
-    if (!normalizedEmail || !courseId) {
-      return res
-        .status(400)
-        .json({ message: "userEmail and courseId are required" });
+    const { userEmail, userId, courseId } = req.body || {};
+    let user = null;
+    if (userId) {
+      user = await User.findById(userId).exec();
+    } else {
+      const normalizedEmail =
+        typeof userEmail === "string" ? userEmail.trim().toLowerCase() : "";
+      if (!normalizedEmail) {
+        return res.status(400).json({ message: "userEmail or userId is required" });
+      }
+      user = await User.findOne({ email: normalizedEmail }).exec();
     }
-    const user = await User.findOne({ email: normalizedEmail }).exec();
     if (!user) {
-      return res.status(400).json({ message: "Invalid userEmail" });
+      return res.status(400).json({ message: "Invalid nurse user" });
     }
-    const courseExists = await Course.exists({ _id: courseId });
-    if (!courseExists) {
+    if (user.role !== "nurse") {
+      return res.status(400).json({ message: "Only nurses can be registered to courses" });
+    }
+    if (!courseId) {
+      return res.status(400).json({ message: "courseId is required" });
+    }
+    const course = await Course.findById(courseId).lean().exec();
+    if (!course) {
       return res.status(400).json({ message: "Invalid courseId" });
     }
-    const created = await Enrollment.create({ userId: user._id, courseId });
-    res.status(201).json(created);
+    if (req.user.role === "supervisor") {
+      const nurseQuery = await filterUsersByDepartment(req.user, { _id: user._id });
+      const nurseAllowed = await User.exists(nurseQuery);
+      if (!nurseAllowed) {
+        return res.status(403).json({ message: "Nurse is outside your department" });
+      }
+      const { ok } = await canManageCourse(req.user, courseId);
+      if (!ok) {
+        return res.status(403).json({ message: "Course is outside your department" });
+      }
+      if (course.status !== "PUBLISHED") {
+        return res.status(400).json({
+          message: "Only published courses can be assigned to nurses",
+        });
+      }
+    }
+    const created = await Enrollment.create({
+      userId: user._id,
+      courseId,
+      registeredBy: req.user._id,
+      registeredAt: new Date(),
+    });
+    const populated = await Enrollment.findById(created._id)
+      .populate("userId", "name email empId department")
+      .populate("courseId", "title status")
+      .populate("registeredBy", "name email")
+      .lean()
+      .exec();
+    res.status(201).json(populated);
   } catch (err) {
     if (err?.code === 11000) {
-      return res.status(409).json({ message: "Already enrolled" });
+      return res.status(409).json({ message: "Nurse is already registered for this course" });
     }
     console.error("Error creating enrollment", err);
     res.status(500).json({ message: "Failed to create enrollment" });
   }
 });
 
+app.get("/api/admin/enrollments", requireAdminOrSupervisor(), async (req, res) => {
+  try {
+    const query = {};
+    if (req.query.courseId) query.courseId = req.query.courseId;
+    if (req.query.userId) query.userId = req.query.userId;
+
+    let enrollments = await Enrollment.find(query)
+      .sort({ registeredAt: -1 })
+      .populate("userId", "name email empId department")
+      .populate("courseId", "title status departmentId")
+      .populate("registeredBy", "name email")
+      .lean()
+      .exec();
+
+    if (req.user.role === "supervisor") {
+      const deptId = await resolveUserDepartmentId(req.user);
+      const dept = deptId
+        ? await Department.findById(deptId).lean().exec()
+        : null;
+      const deptName = dept?.name || req.user.department;
+      enrollments = enrollments.filter((e) => {
+        const nurse = e.userId;
+        const course = e.courseId;
+        if (!nurse || !course) return false;
+        const nurseInDept =
+          String(nurse.departmentId || "") === String(deptId) ||
+          nurse.department === deptName;
+        const courseInDept = String(course.departmentId || "") === String(deptId);
+        return nurseInDept && courseInDept;
+      });
+    }
+
+    res.json(enrollments);
+  } catch (err) {
+    console.error("Error fetching enrollments", err);
+    res.status(500).json({ message: "Failed to fetch enrollments" });
+  }
+});
+
+app.get("/api/nurse/my-courses", requireAuth(), async (req, res) => {
+  try {
+    if (req.user.role !== "nurse") {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const enrollments = await Enrollment.find({ userId: req.user._id })
+      .sort({ registeredAt: -1 })
+      .lean()
+      .exec();
+    const courseIds = enrollments.map((e) => e.courseId);
+
+    const [courses, departments, allModules, progressDocs] = await Promise.all([
+      Course.find({
+        _id: { $in: courseIds },
+        status: "PUBLISHED",
+      })
+        .lean()
+        .exec(),
+      Department.find({}).select({ _id: 1, name: 1 }).lean().exec(),
+      Module.find({ courseId: { $in: courseIds } })
+        .select({ _id: 1, courseId: 1, order: 1 })
+        .lean()
+        .exec(),
+      Progress.find({ userId: req.user._id })
+        .select({ moduleId: 1, status: 1, quizPassed: 1, percent: 1 })
+        .lean()
+        .exec(),
+    ]);
+
+    const deptById = new Map(departments.map((d) => [String(d._id), d]));
+    const progressByModule = new Map(
+      progressDocs.map((p) => [String(p.moduleId), p])
+    );
+    const enrollmentByCourse = new Map(
+      enrollments.map((e) => [String(e.courseId), e])
+    );
+
+    const payload = courses.map((course) => {
+      const courseModules = allModules
+        .filter((m) => String(m.courseId) === String(course._id))
+        .sort((a, b) => (a.order || 0) - (b.order || 0));
+      const completedCount = courseModules.filter((m) => {
+        const p = progressByModule.get(String(m._id));
+        return normalizeProgressStatus(p?.status) === "COMPLETED";
+      }).length;
+      const progressPercent = courseModules.length
+        ? Math.round((completedCount / courseModules.length) * 100)
+        : 0;
+      const enrollment = enrollmentByCourse.get(String(course._id));
+
+      return {
+        _id: course._id,
+        title: course.title,
+        description: course.description || "",
+        status: course.status || "PUBLISHED",
+        department: deptById.get(String(course.departmentId)) || null,
+        registeredAt: enrollment?.registeredAt || enrollment?.createdAt || null,
+        totalModules: courseModules.length,
+        completedModules: completedCount,
+        progressPercent,
+      };
+    });
+
+    res.json(payload);
+  } catch (err) {
+    console.error("Error fetching nurse courses", err);
+    res.status(500).json({ message: "Failed to fetch courses" });
+  }
+});
+
+app.get("/api/nurse/courses/:courseId/modules", requireAuth(), async (req, res) => {
+  try {
+    if (req.user.role !== "nurse") {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const courseId = req.params.courseId;
+    const enrolled = await isEnrolledInCourse(req.user._id, courseId);
+    if (!enrolled) {
+      return res.status(403).json({
+        message: "You are not registered for this course.",
+        notRegistered: true,
+      });
+    }
+
+    const course = await Course.findById(courseId).lean().exec();
+    if (!course) {
+      return res.status(404).json({ message: "Course not found" });
+    }
+    if (!isCoursePublished(course)) {
+      return res.status(403).json({ message: "This course is not available yet." });
+    }
+
+    const modules = await getCourseModulesOrdered(courseId);
+    const moduleIds = modules.map((m) => m._id);
+    const [progressMap, countsMap, department] = await Promise.all([
+      getProgressMap(req.user._id, moduleIds),
+      getContentCountsByModule(moduleIds),
+      Department.findById(course.departmentId).select({ _id: 1, name: 1 }).lean().exec(),
+    ]);
+
+    const modulePayload = await buildModuleProgressPayload({
+      userId: req.user._id,
+      courseId,
+      modules,
+      progressMap,
+      countsMap,
+    });
+
+    const completedCount = modulePayload.filter((m) => m.status === "COMPLETED").length;
+    const progressPercent = modules.length
+      ? Math.round((completedCount / modules.length) * 100)
+      : 0;
+
+    res.json({
+      course: {
+        _id: course._id,
+        title: course.title,
+        description: course.description || "",
+        department,
+        progressPercent,
+        completedModules: completedCount,
+        totalModules: modules.length,
+      },
+      modules: modulePayload,
+    });
+  } catch (err) {
+    console.error("Error fetching course modules", err);
+    res.status(500).json({ message: "Failed to fetch course modules" });
+  }
+});
+
 // Admin - assign modules (or full course) to nurses
-app.post("/api/assignments", requireAdmin(), async (req, res) => {
+app.post("/api/assignments", requireAdminOrSupervisor(), async (req, res) => {
   try {
     const { nurseIds, courseId, moduleIds, dueDate } = req.body || {};
     if (!Array.isArray(nurseIds) || nurseIds.length === 0 || !courseId) {
@@ -1266,10 +2084,27 @@ app.post("/api/assignments", requireAdmin(), async (req, res) => {
       return res.status(400).json({ message: "Invalid courseId" });
     }
 
-    const nurses = await User.find({
-      _id: { $in: nurseIds },
-      role: "nurse",
-    })
+    if (req.user.role === "supervisor") {
+      const { ok } = await canManageCourse(req.user, courseId);
+      if (!ok) {
+        return res.status(403).json({ message: "Course is outside your department" });
+      }
+      if (course.status !== "PUBLISHED") {
+        return res.status(400).json({
+          message: "Only published courses can be assigned",
+        });
+      }
+    }
+
+    const nurseQuery =
+      req.user.role === "supervisor"
+        ? await filterUsersByDepartment(req.user, {
+            _id: { $in: nurseIds },
+            role: "nurse",
+          })
+        : { _id: { $in: nurseIds }, role: "nurse" };
+
+    const nurses = await User.find(nurseQuery)
       .select({ _id: 1 })
       .lean()
       .exec();
@@ -1337,7 +2172,7 @@ app.post("/api/assignments", requireAdmin(), async (req, res) => {
 });
 
 // Admin - list assignments
-app.get("/api/assignments", requireAdmin(), async (req, res) => {
+app.get("/api/assignments", requireAdminOrSupervisor(), async (req, res) => {
   try {
     const query = {};
     if (req.query.nurseId) {
@@ -1468,7 +2303,7 @@ app.patch("/api/assignments/:id", requireAuth(), async (req, res) => {
 });
 
 // Admin - remove assignment
-app.delete("/api/assignments/:id", requireAdmin(), async (req, res) => {
+app.delete("/api/assignments/:id", requireAdminOrSupervisor(), async (req, res) => {
   try {
     const deleted = await ModuleAssignment.findByIdAndDelete(req.params.id)
       .lean()
@@ -1563,49 +2398,206 @@ app.get("/api/me/modules", requireAuth(), async (req, res) => {
 // Learner/Admin - update progress for a module
 app.post("/api/modules/:moduleId/progress", requireAuth(), async (req, res) => {
   try {
-    const { status, percent } = req.body || {};
     const allowed = await canAccessModuleContent(req.user, req.params.moduleId);
     if (!allowed) {
       return res.status(403).json({ message: "Forbidden" });
     }
 
-    const next = {};
-    if (typeof status === "string") {
-      if (!["not-started", "in-progress", "completed"].includes(status)) {
-        return res.status(400).json({ message: "Invalid status" });
-      }
-      next.status = status;
-    }
-    if (typeof percent === "number") {
-      const p = Math.max(0, Math.min(100, percent));
-      next.percent = p;
+    const mod = await Module.findById(req.params.moduleId).lean().exec();
+    if (!mod) {
+      return res.status(404).json({ message: "Module not found" });
     }
 
-    const doc = await Progress.findOneAndUpdate(
-      { userId: req.user._id, moduleId: req.params.moduleId },
-      { $set: next, $setOnInsert: { userId: req.user._id, moduleId: req.params.moduleId } },
-      { new: true, upsert: true }
-    )
-      .lean()
-      .exec();
+    const progressDoc = await getOrCreateProgress(
+      req.user._id,
+      req.params.moduleId,
+      mod.courseId
+    );
+    const updated = await checkAndUpdateCompletion(
+      req.user._id,
+      req.params.moduleId,
+      mod.courseId
+    );
 
-    if (next.status) {
-      const mapped =
-        next.status === "completed"
-          ? "COMPLETED"
-          : next.status === "in-progress"
-          ? "IN_PROGRESS"
-          : "NOT_STARTED";
-      await ModuleAssignment.findOneAndUpdate(
-        { nurseId: req.user._id, moduleId: req.params.moduleId },
-        { $set: { status: mapped } }
-      ).exec();
-    }
-
-    res.json({ status: doc.status, percent: doc.percent });
+    res.json({
+      status: updated.status,
+      percent: updated.percent,
+      quizPassed: updated.quizPassed,
+      quizScore: updated.quizScore,
+    });
   } catch (err) {
     console.error("Error updating progress", err);
     res.status(500).json({ message: "Failed to update progress" });
+  }
+});
+
+app.post("/api/modules/:moduleId/progress/view-lesson", requireAuth(), async (req, res) => {
+  try {
+    const { lessonId } = req.body || {};
+    if (!lessonId) {
+      return res.status(400).json({ message: "lessonId is required" });
+    }
+    const allowed = await canAccessModuleContent(req.user, req.params.moduleId);
+    if (!allowed) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const lesson = await Lesson.findById(lessonId).lean().exec();
+    if (!lesson || String(lesson.moduleId) !== String(req.params.moduleId)) {
+      return res.status(400).json({ message: "Invalid lessonId" });
+    }
+
+    const mod = await Module.findById(req.params.moduleId).lean().exec();
+    const progressDoc = await getOrCreateProgress(
+      req.user._id,
+      req.params.moduleId,
+      mod.courseId
+    );
+    const viewed = new Set((progressDoc.lessonsViewed || []).map(String));
+    viewed.add(String(lessonId));
+    progressDoc.lessonsViewed = [...viewed];
+    if (progressDoc.status === "NOT_STARTED") {
+      progressDoc.status = "IN_PROGRESS";
+    }
+    await progressDoc.save();
+    const updated = await checkAndUpdateCompletion(
+      req.user._id,
+      req.params.moduleId,
+      mod.courseId
+    );
+    res.json({ message: "Lesson marked as viewed", progress: updated });
+  } catch (err) {
+    console.error("Error marking lesson viewed", err);
+    res.status(500).json({ message: "Failed to update lesson progress" });
+  }
+});
+
+app.post("/api/modules/:moduleId/progress/view-sop", requireAuth(), async (req, res) => {
+  try {
+    const { sopId } = req.body || {};
+    if (!sopId) {
+      return res.status(400).json({ message: "sopId is required" });
+    }
+    const allowed = await canAccessModuleContent(req.user, req.params.moduleId);
+    if (!allowed) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const sop = await SOP.findById(sopId).lean().exec();
+    if (!sop || String(sop.moduleId) !== String(req.params.moduleId)) {
+      return res.status(400).json({ message: "Invalid sopId" });
+    }
+
+    const mod = await Module.findById(req.params.moduleId).lean().exec();
+    const progressDoc = await getOrCreateProgress(
+      req.user._id,
+      req.params.moduleId,
+      mod.courseId
+    );
+    const viewed = new Set((progressDoc.sopsViewed || []).map(String));
+    viewed.add(String(sopId));
+    progressDoc.sopsViewed = [...viewed];
+    if (progressDoc.status === "NOT_STARTED") {
+      progressDoc.status = "IN_PROGRESS";
+    }
+    await progressDoc.save();
+    const updated = await checkAndUpdateCompletion(
+      req.user._id,
+      req.params.moduleId,
+      mod.courseId
+    );
+    res.json({ message: "SOP marked as viewed", progress: updated });
+  } catch (err) {
+    console.error("Error marking SOP viewed", err);
+    res.status(500).json({ message: "Failed to update SOP progress" });
+  }
+});
+
+app.post("/api/modules/:moduleId/progress/view-content", requireAuth(), async (req, res) => {
+  try {
+    const allowed = await canAccessModuleContent(req.user, req.params.moduleId);
+    if (!allowed) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const mod = await Module.findById(req.params.moduleId).lean().exec();
+    if (!mod) {
+      return res.status(404).json({ message: "Module not found" });
+    }
+
+    const progressDoc = await getOrCreateProgress(
+      req.user._id,
+      req.params.moduleId,
+      mod.courseId
+    );
+    progressDoc.contentViewed = true;
+    if (progressDoc.status === "NOT_STARTED") {
+      progressDoc.status = "IN_PROGRESS";
+    }
+    await progressDoc.save();
+    const updated = await checkAndUpdateCompletion(
+      req.user._id,
+      req.params.moduleId,
+      mod.courseId
+    );
+    res.json({ message: "Module content marked as viewed", progress: updated });
+  } catch (err) {
+    console.error("Error marking content viewed", err);
+    res.status(500).json({ message: "Failed to update content progress" });
+  }
+});
+
+app.get("/api/modules/:moduleId/progress/me", requireAuth(), async (req, res) => {
+  try {
+    const mod = await Module.findById(req.params.moduleId).lean().exec();
+    if (!mod) {
+      return res.status(404).json({ message: "Module not found" });
+    }
+
+    if (req.user.role === "nurse") {
+      const enrolled = await isEnrolledInCourse(req.user._id, mod.courseId);
+      if (!enrolled) {
+        return res.status(403).json({ message: "You are not registered for this course." });
+      }
+    }
+
+    const modules = await getCourseModulesOrdered(mod.courseId);
+    const progressMap = await getProgressMap(
+      req.user._id,
+      modules.map((m) => m._id)
+    );
+    const countsMap = await getContentCountsByModule([mod._id]);
+    const progress = progressMap.get(String(mod._id)) || null;
+    const counts = countsMap.get(String(mod._id)) || {
+      lessonCount: 0,
+      sopCount: 0,
+      hasContent: false,
+    };
+    const unlocked =
+      req.user.role === "admin" ||
+      isPreviousModuleCompleted(mod, modules, progressMap);
+
+    res.json({
+      status: deriveDisplayStatus(progress, unlocked),
+      unlocked,
+      percent: progress ? computeProgressPercent(progress, counts) : 0,
+      quizPassed: !!progress?.quizPassed,
+      quizScore: progress?.quizScore ?? null,
+      quizAttemptsCount: progress?.quizAttemptsCount ?? 0,
+      lessonsViewed: progress?.lessonsViewed || [],
+      sopsViewed: progress?.sopsViewed || [],
+      contentViewed: !!progress?.contentViewed,
+      passingPercentage: mod.passingPercentage ?? 70,
+      maxQuizAttempts: mod.maxQuizAttempts ?? null,
+      contentRequirements: {
+        lessonsTotal: counts.lessonCount,
+        sopsTotal: counts.sopCount,
+        contentRequired: counts.hasContent,
+      },
+    });
+  } catch (err) {
+    console.error("Error fetching module progress", err);
+    res.status(500).json({ message: "Failed to fetch module progress" });
   }
 });
 
@@ -1726,8 +2718,11 @@ app.get("/api/modules/:moduleId/questions/learner", requireAuth(), async (req, r
 });
 
 // Question Bank - Admin: Create a question
-app.post("/api/modules/:moduleId/questions", requireAdmin(), async (req, res) => {
+app.post("/api/modules/:moduleId/questions", requireAdminOrSupervisor(), async (req, res) => {
   try {
+    const mod = await assertCanEditModule(req, res, req.params.moduleId);
+    if (!mod) return;
+
     const { question, type, options, correctAnswer } = req.body || {};
 
     if (!question || !type || !correctAnswer) {
@@ -1740,11 +2735,6 @@ app.post("/api/modules/:moduleId/questions", requireAdmin(), async (req, res) =>
 
     if (type === "mcq" && (!Array.isArray(options) || options.length < 2)) {
       return res.status(400).json({ message: "MCQ requires at least 2 options" });
-    }
-
-    const moduleExists = await Module.exists({ _id: req.params.moduleId });
-    if (!moduleExists) {
-      return res.status(400).json({ message: "Invalid moduleId" });
     }
 
     // Get the next order number
@@ -1774,8 +2764,15 @@ app.post("/api/modules/:moduleId/questions", requireAdmin(), async (req, res) =>
 });
 
 // Question Bank - Admin: Update a question
-app.put("/api/questions/:id", requireAdmin(), async (req, res) => {
+app.put("/api/questions/:id", requireAdminOrSupervisor(), async (req, res) => {
   try {
+    const existing = await Question.findById(req.params.id).lean().exec();
+    if (!existing) {
+      return res.status(404).json({ message: "Question not found" });
+    }
+    const mod = await assertCanEditModule(req, res, String(existing.moduleId));
+    if (!mod) return;
+
     const { question, type, options, correctAnswer } = req.body || {};
 
     const updates = {};
@@ -1807,8 +2804,15 @@ app.put("/api/questions/:id", requireAdmin(), async (req, res) => {
 });
 
 // Question Bank - Admin: Delete a question
-app.delete("/api/questions/:id", requireAdmin(), async (req, res) => {
+app.delete("/api/questions/:id", requireAdminOrSupervisor(), async (req, res) => {
   try {
+    const existing = await Question.findById(req.params.id).lean().exec();
+    if (!existing) {
+      return res.status(404).json({ message: "Question not found" });
+    }
+    const mod = await assertCanEditModule(req, res, String(existing.moduleId));
+    if (!mod) return;
+
     const deleted = await Question.findByIdAndDelete(req.params.id).lean().exec();
     if (!deleted) {
       return res.status(404).json({ message: "Question not found" });
@@ -1861,9 +2865,31 @@ app.post("/api/modules/:moduleId/quiz-attempt", requireAuth(), async (req, res) 
       return res.status(403).json({ message: "Forbidden" });
     }
 
-    // Validate and score answers
+    const mod = await Module.findById(req.params.moduleId).lean().exec();
+    if (!mod) {
+      return res.status(404).json({ message: "Module not found" });
+    }
+
+    const passingPercentage = mod.passingPercentage ?? 70;
+    const maxAttempts = mod.maxQuizAttempts ?? null;
+    const attemptCount = await getLatestQuizAttemptCount(
+      req.user._id,
+      req.params.moduleId
+    );
+    if (maxAttempts !== null && attemptCount >= maxAttempts) {
+      return res.status(403).json({
+        message: `Maximum quiz attempts (${maxAttempts}) reached.`,
+        attemptsUsed: attemptCount,
+        maxAttempts,
+      });
+    }
+
     const questions = await Question.find({ moduleId: req.params.moduleId }).lean().exec();
-    const questionMap = new Map(questions.map(q => [String(q._id), q]));
+    if (!questions.length) {
+      return res.status(400).json({ message: "This module has no quiz questions yet." });
+    }
+
+    const questionMap = new Map(questions.map((q) => [String(q._id), q]));
 
     let correctCount = 0;
     const scoredAnswers = answers.map(({ questionId, selectedAnswer }) => {
@@ -1881,24 +2907,64 @@ app.post("/api/modules/:moduleId/quiz-attempt", requireAuth(), async (req, res) 
       };
     });
 
+    const percent = questions.length
+      ? Math.round((correctCount / questions.length) * 100)
+      : 0;
+    const passed = percent >= passingPercentage;
+
     const attempt = await QuizAttempt.create({
       userId: req.user._id,
       moduleId: req.params.moduleId,
       answers: scoredAnswers,
       score: correctCount,
       totalQuestions: questions.length,
+      percent,
+      passed,
+      passingPercentage,
     });
+
+    const progressDoc = await getOrCreateProgress(
+      req.user._id,
+      req.params.moduleId,
+      mod.courseId
+    );
+    progressDoc.quizAttemptsCount = (progressDoc.quizAttemptsCount || 0) + 1;
+    progressDoc.quizScore = percent;
+    if (passed) {
+      progressDoc.quizPassed = true;
+    }
+    if (progressDoc.status === "NOT_STARTED") {
+      progressDoc.status = "IN_PROGRESS";
+    }
+    await progressDoc.save();
+
+    const updatedProgress = await checkAndUpdateCompletion(
+      req.user._id,
+      req.params.moduleId,
+      mod.courseId
+    );
 
     await ModuleAssignment.findOneAndUpdate(
       { nurseId: req.user._id, moduleId: req.params.moduleId },
-      { $set: { status: "COMPLETED" } }
+      {
+        $set: {
+          status:
+            updatedProgress.status === "COMPLETED" ? "COMPLETED" : "IN_PROGRESS",
+        },
+      }
     ).exec();
 
     res.status(201).json({
       _id: attempt._id,
       score: attempt.score,
       totalQuestions: attempt.totalQuestions,
-      percent: Math.round((correctCount / questions.length) * 100),
+      percent,
+      passed,
+      passingPercentage,
+      moduleCompleted: updatedProgress.status === "COMPLETED",
+      nextModuleUnlocked: passed && updatedProgress.status === "COMPLETED",
+      attemptsUsed: progressDoc.quizAttemptsCount,
+      maxAttempts,
       answers: scoredAnswers,
     });
   } catch (err) {
@@ -1931,7 +2997,9 @@ app.get("/api/modules/:moduleId/quiz-attempt", requireAuth(), async (req, res) =
       _id: attempt._id,
       score: attempt.score,
       totalQuestions: attempt.totalQuestions,
-      percent: attempt.totalQuestions ? Math.round((attempt.score / attempt.totalQuestions) * 100) : 0,
+      percent: attempt.percent ?? (attempt.totalQuestions ? Math.round((attempt.score / attempt.totalQuestions) * 100) : 0),
+      passed: !!attempt.passed,
+      passingPercentage: attempt.passingPercentage ?? 70,
       createdAt: attempt.createdAt,
     });
   } catch (err) {
@@ -1954,6 +3022,11 @@ async function start() {
   try {
     await mongoose.connect(MONGO_URI);
     console.log("Connected to MongoDB");
+
+    await Course.updateMany(
+      { status: { $exists: false } },
+      { $set: { status: "PUBLISHED" } }
+    ).exec();
 
     app.listen(PORT, () => {
       console.log(`Backend API listening on http://localhost:${PORT}`);

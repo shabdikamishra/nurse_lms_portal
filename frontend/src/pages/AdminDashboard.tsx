@@ -23,6 +23,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { AdminApprovalAlert } from '@/components/admin/AdminApprovalAlert';
 
 const API_BASE_URL =
   (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:4000';
@@ -73,6 +75,7 @@ export default function AdminDashboard() {
 
   return (
     <DashboardLayout>
+      <AdminApprovalAlert />
       <div className="space-y-6 animate-fade-in">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -96,6 +99,16 @@ export default function AdminDashboard() {
 
         {/* Stats Overview */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {(summary?.pendingApprovals ?? 0) > 0 && (
+            <div className="col-span-full rounded-lg border border-orange-200 bg-orange-50 dark:bg-orange-950/30 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <p className="text-sm font-medium text-orange-900 dark:text-orange-100">
+                {summary.pendingApprovals} course(s) pending supervisor approval
+              </p>
+              <Button size="sm" asChild>
+                <Link to="/admin/pending-approvals">Review now</Link>
+              </Button>
+            </div>
+          )}
           <StatsCard
             title="Total Certified Nurses"
             value={isLoading ? '...' : String(summary?.nursesCount ?? 0)}

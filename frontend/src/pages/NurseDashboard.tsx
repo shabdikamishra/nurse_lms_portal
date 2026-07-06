@@ -26,6 +26,7 @@ import {
   Bar
 } from 'recharts';
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 const API_BASE_URL =
   (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:4000';
@@ -90,6 +91,7 @@ const upcomingClasses = [
 
 export default function NurseDashboard() {
   const { user, authHeaders } = useAuth();
+  const navigate = useNavigate();
   const [summary, setSummary] = useState<any>(null);
 
   useEffect(() => {
@@ -167,14 +169,43 @@ export default function NurseDashboard() {
 
         <div className="healthcare-card flex flex-wrap gap-2">
           <span className="content-tag content-tag-lesson">
-            Assigned Modules: {String(summary?.totalModules ?? 0)}
+            Registered Courses: {String(summary?.registeredCourses ?? 0)}
           </span>
           <span className="content-tag content-tag-quiz">
-            Completed Modules: {String(summary?.completedModules ?? 0)}
+            Modules Completed: {String(summary?.completedModules ?? 0)} / {String(summary?.totalModules ?? 0)}
           </span>
           <span className="content-tag content-tag-video">🎥 Videos</span>
           <span className="content-tag content-tag-sop">📘 SOP</span>
         </div>
+
+        {/* Registered courses */}
+        {Array.isArray(summary?.courses) && summary.courses.length > 0 && (
+          <div className="healthcare-card">
+            <h3 className="text-lg font-semibold mb-4">My Registered Courses</h3>
+            <div className="space-y-3">
+              {summary.courses.map((c: { courseId: string; progressPercent: number; completedModules: number; totalModules: number }) => (
+                <div key={c.courseId} className="border rounded-lg p-3">
+                  <div className="flex justify-between text-sm mb-2">
+                    <span className="font-medium">Course progress</span>
+                    <span>{c.progressPercent}%</span>
+                  </div>
+                  <div className="w-full bg-muted rounded-full h-2">
+                    <div
+                      className="bg-primary h-2 rounded-full transition-all"
+                      style={{ width: `${c.progressPercent}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {c.completedModules} of {c.totalModules} modules completed
+                  </p>
+                </div>
+              ))}
+            </div>
+            <Button variant="outline" size="sm" className="mt-4" onClick={() => navigate('/modules')}>
+              View All Courses
+            </Button>
+          </div>
+        )}
 
         {/* Charts Section */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

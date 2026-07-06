@@ -53,7 +53,8 @@ type AdminUser = {
   name: string;
   empId: string;
   department: string;
-  role: 'nurse' | 'admin';
+  role: 'nurse' | 'admin' | 'supervisor';
+  departmentId?: string;
 };
 
 type NurseFile = {
@@ -98,6 +99,9 @@ export default function UserManagement() {
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmpId, setNewUserEmpId] = useState('');
   const [newUserDepartment, setNewUserDepartment] = useState('');
+  const [newUserRole, setNewUserRole] = useState<'nurse' | 'supervisor'>('nurse');
+  const [departments, setDepartments] = useState<{ _id: string; name: string }[]>([]);
+  const [newUserDepartmentId, setNewUserDepartmentId] = useState('');
   const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [createUserError, setCreateUserError] = useState('');
   const [createUserSuccess, setCreateUserSuccess] = useState('');
@@ -112,11 +116,27 @@ export default function UserManagement() {
     setIsDialogOpen(true);
   };
 
+  useEffect(() => {
+    const loadDepts = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/departments`, {
+          headers: authHeaders(),
+        });
+        if (res.ok) setDepartments(await res.json());
+      } catch {
+        /* ignore */
+      }
+    };
+    void loadDepts();
+  }, [authHeaders]);
+
   const openAddUserDialog = () => {
     setNewUserEmail('');
     setNewUserName('');
     setNewUserEmpId('');
     setNewUserDepartment('');
+    setNewUserDepartmentId('');
+    setNewUserRole('nurse');
     setCreateUserError('');
     setCreateUserSuccess('');
     setCreatedDemoPassword(null);
@@ -133,7 +153,8 @@ export default function UserManagement() {
       !newUserEmail.trim() ||
       !newUserName.trim() ||
       !newUserEmpId.trim() ||
-      !newUserDepartment.trim()
+      !newUserDepartment.trim() ||
+      (newUserRole === 'supervisor' && !newUserDepartmentId)
     ) {
       setCreateUserError('Please fill in all required fields.');
       return;
@@ -152,7 +173,8 @@ export default function UserManagement() {
           name: newUserName.trim(),
           empId: newUserEmpId.trim(),
           department: newUserDepartment.trim(),
-          role: 'nurse',
+          departmentId: newUserRole === 'supervisor' ? newUserDepartmentId : undefined,
+          role: newUserRole,
         }),
       });
 
@@ -554,14 +576,51 @@ export default function UserManagement() {
                 />
               </div>
               <div className="space-y-2">
+                <Label htmlFor="new-user-role">Role</Label>
+                <Select
+                  value={newUserRole}
+                  onValueChange={(v) => setNewUserRole(v as 'nurse' | 'supervisor')}
+                >
+                  <SelectTrigger id="new-user-role">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="nurse">Nurse</SelectItem>
+                    <SelectItem value="supervisor">Supervisor</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="new-user-department">Department</Label>
-                <Input
-                  id="new-user-department"
-                  placeholder="e.g., ICU, Emergency"
-                  value={newUserDepartment}
-                  onChange={(e) => setNewUserDepartment(e.target.value)}
-                  required
-                />
+                {newUserRole === 'supervisor' && departments.length > 0 ? (
+                  <Select
+                    value={newUserDepartmentId}
+                    onValueChange={(id) => {
+                      setNewUserDepartmentId(id);
+                      const dept = departments.find((d) => d._id === id);
+                      if (dept) setNewUserDepartment(dept.name);
+                    }}
+                  >
+                    <SelectTrigger id="new-user-department">
+                      <SelectValue placeholder="Select department" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {departments.map((d) => (
+                        <SelectItem key={d._id} value={d._id}>
+                          {d.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    id="new-user-department"
+                    placeholder="e.g., ICU, Emergency"
+                    value={newUserDepartment}
+                    onChange={(e) => setNewUserDepartment(e.target.value)}
+                    required
+                  />
+                )}
               </div>
 
               {createUserError && (

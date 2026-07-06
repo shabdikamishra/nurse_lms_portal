@@ -53,7 +53,12 @@ type Question = {
 };
 
 interface AdminModuleCardProps {
-  module: { _id: string; title: string };
+  module: {
+    _id: string;
+    title: string;
+    passingPercentage?: number;
+    maxQuizAttempts?: number | null;
+  };
   lessons: Lesson[];
   sops: Sop[];
   onUploadSuccess: () => void;
@@ -100,6 +105,54 @@ export default function AdminModuleCard({
   const [questionError, setQuestionError] = useState('');
   const [questionSuccess, setQuestionSuccess] = useState('');
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
+  const [passingPercentage, setPassingPercentage] = useState(
+    String(module.passingPercentage ?? 70)
+  );
+  const [attemptLimitType, setAttemptLimitType] = useState<'unlimited' | 'limited'>(
+    module.maxQuizAttempts != null ? 'limited' : 'unlimited'
+  );
+  const [maxAttempts, setMaxAttempts] = useState(
+    String(module.maxQuizAttempts ?? 3)
+  );
+  const [quizSettingsSaving, setQuizSettingsSaving] = useState(false);
+  const [quizSettingsMessage, setQuizSettingsMessage] = useState('');
+
+  useEffect(() => {
+    setPassingPercentage(String(module.passingPercentage ?? 70));
+    setAttemptLimitType(module.maxQuizAttempts != null ? 'limited' : 'unlimited');
+    setMaxAttempts(String(module.maxQuizAttempts ?? 3));
+  }, [module._id, module.passingPercentage, module.maxQuizAttempts]);
+
+  const saveQuizSettings = async () => {
+    setQuizSettingsSaving(true);
+    setQuizSettingsMessage('');
+    try {
+      const pct = Number(passingPercentage);
+      if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+        throw new Error('Passing percentage must be between 0 and 100');
+      }
+      const body: Record<string, unknown> = {
+        passingPercentage: pct,
+        maxQuizAttempts:
+          attemptLimitType === 'limited' ? Number(maxAttempts) : null,
+      };
+      const res = await fetch(`${API_BASE_URL}/api/modules/${module._id}`, {
+        method: 'PUT',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.message || 'Failed to save quiz settings');
+      setQuizSettingsMessage('Quiz settings saved');
+      onQuestionsChange?.();
+    } catch (err: unknown) {
+      setQuizSettingsMessage(
+        err instanceof Error ? err.message : 'Failed to save quiz settings'
+      );
+    } finally {
+      setQuizSettingsSaving(false);
+    }
+  };
 
   // Clear success messages after 3 seconds
   useEffect(() => {
@@ -681,6 +734,57 @@ export default function AdminModuleCard({
       {/* Questions Tab */}
       {activeTab === 'questions' && (
         <div className="space-y-4">
+          <div className="border rounded-lg p-4 space-y-3 bg-muted/30">
+            <h4 className="font-medium">Quiz Settings</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Passing marks (%)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={passingPercentage}
+                  onChange={(e) => setPassingPercentage(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Quiz attempts</Label>
+                <select
+                  className="w-full border border-border rounded-md bg-background px-3 py-2 text-sm"
+                  value={attemptLimitType}
+                  onChange={(e) =>
+                    setAttemptLimitType(e.target.value as 'unlimited' | 'limited')
+                  }
+                >
+                  <option value="unlimited">Unlimited attempts</option>
+                  <option value="limited">Limited attempts</option>
+                </select>
+              </div>
+              {attemptLimitType === 'limited' && (
+                <div className="space-y-2">
+                  <Label>Max attempts</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={maxAttempts}
+                    onChange={(e) => setMaxAttempts(e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              disabled={quizSettingsSaving}
+              onClick={() => void saveQuizSettings()}
+            >
+              {quizSettingsSaving ? 'Saving...' : 'Save Quiz Settings'}
+            </Button>
+            {quizSettingsMessage && (
+              <p className="text-xs text-muted-foreground">{quizSettingsMessage}</p>
+            )}
+          </div>
+
           {questionError && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />

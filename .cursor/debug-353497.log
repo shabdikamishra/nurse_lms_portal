@@ -1,0 +1,13 @@
+{"sessionId":"353497","runId":"run1","hypothesisId":"H1","location":"backend/server.js:start","message":"MongoDB connected successfully","data":{"mongoUriConfigured":true},"timestamp":1777565892228}
+{"sessionId":"353497","runId":"run1","hypothesisId":"H1","location":"backend/server.js:start","message":"API listen callback executed","data":{"port":"4000"},"timestamp":1777565892268}
+{"sessionId":"353497","runId":"run1","hypothesisId":"H1","location":"backend/server.js:/api/health","message":"Health endpoint hit","data":{"method":"GET","url":"/api/health"},"timestamp":1777565899906}
+{"sessionId":"353497","runId":"run1","hypothesisId":"H1","location":"backend/server.js:/api/health","message":"Health endpoint hit","data":{"method":"GET","url":"/api/health"},"timestamp":1777566029655}
+{"sessionId":"353497","runId":"run1","hypothesisId":"H3","location":"backend/server.js:/api/auth/bootstrap-admin","message":"Bootstrap route entered","data":{"hasBody":true},"timestamp":1777566058105}
+{"sessionId":"353497","runId":"run1","hypothesisId":"H4","location":"backend/server.js:/api/auth/bootstrap-admin","message":"Bootstrap user count checked","data":{"existingUsers":10},"timestamp":1777566058403}
+{"sessionId":"353497","runId":"run1","hypothesisId":"H1","location":"backend/server.js:/api/health","message":"Health endpoint hit","data":{"method":"GET","url":"/api/health"},"timestamp":1777566366735}
+{"sessionId":"353497","runId":"run1","hypothesisId":"H3","location":"backend/server.js:/api/auth/bootstrap-admin","message":"Bootstrap route entered","data":{"hasBody":true},"timestamp":1777566379652}
+{"sessionId":"353497","runId":"run1","hypothesisId":"H4","location":"backend/server.js:/api/auth/bootstrap-admin","message":"Bootstrap user count checked","data":{"existingUsers":10},"timestamp":1777566379773}
+{"sessionId":"353497","runId":"run1","hypothesisId":"H1","location":"backend/server.js:/api/health","message":"Health endpoint hit","data":{"method":"GET","url":"/api/health"},"timestamp":1777567383571}
+{"sessionId":"353497","runId":"run1","hypothesisId":"H3","location":"backend/server.js:/api/auth/bootstrap-admin","message":"Bootstrap route entered","data":{"hasBody":true},"timestamp":1777567387416}
+{"sessionId":"353497","runId":"run1","hypothesisId":"H4","location":"backend/server.js:/api/auth/bootstrap-admin","message":"Bootstrap user count checked","data":{"existingUsers":0},"timestamp":1777567387491}
+{"sessionId":"353497","runId":"run1","hypothesisId":"H4","location":"backend/server.js:/api/auth/bootstrap-admin","message":"Bootstrap user created","data":{"role":"admin","email":"admin@hospital.com"},"timestamp":1777567387677}

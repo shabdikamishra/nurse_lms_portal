@@ -29,6 +29,12 @@ type QuizAttempt = {
   score: number;
   totalQuestions: number;
   percent: number;
+  passed: boolean;
+  passingPercentage: number;
+  moduleCompleted?: boolean;
+  nextModuleUnlocked?: boolean;
+  attemptsUsed?: number;
+  maxAttempts?: number | null;
   answers: Array<{
     questionId: string;
     selectedAnswer: string;
@@ -60,6 +66,7 @@ export default function QuizModule() {
   const { authHeaders } = useAuth();
 
   const moduleId = searchParams.get('moduleId');
+  const courseId = searchParams.get('courseId');
 
   // Quiz state
   const [quizState, setQuizState] = useState<QuizState>({
@@ -83,6 +90,9 @@ export default function QuizModule() {
   // Quiz submitted
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [quizResult, setQuizResult] = useState<QuizAttempt | null>(null);
+  const [passingPercentage, setPassingPercentage] = useState(70);
+  const [maxAttempts, setMaxAttempts] = useState<number | null>(null);
+  const [attemptsUsed, setAttemptsUsed] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Load questions
@@ -139,6 +149,22 @@ export default function QuizModule() {
     };
 
     loadQuestions();
+    const loadMeta = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/modules/${moduleId}/progress/me`, {
+          headers: authHeaders(),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setPassingPercentage(Number(data.passingPercentage || 70));
+          setMaxAttempts(data.maxQuizAttempts ?? null);
+          setAttemptsUsed(Number(data.quizAttemptsCount || 0));
+        }
+      } catch {
+        // ignore
+      }
+    };
+    void loadMeta();
   }, [moduleId, authHeaders]);
 
   if (quizState.loading) {
@@ -278,6 +304,7 @@ export default function QuizModule() {
       if (!res.ok) throw new Error(data?.message || 'Failed to submit quiz');
 
       setQuizResult(data);
+      setAttemptsUsed(Number(data.attemptsUsed || attemptsUsed + 1));
       setQuizSubmitted(true);
     } catch (err: any) {
       alert(err?.message || 'Failed to submit quiz');
@@ -293,7 +320,9 @@ export default function QuizModule() {
         <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">
           <Button
             variant="outline"
-            onClick={() => navigate(-1)}
+            onClick={() =>
+              courseId ? navigate(`/courses/${courseId}`) : navigate(-1)
+            }
             className="gap-2"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -304,10 +333,10 @@ export default function QuizModule() {
           <div className="healthcare-card space-y-6">
             <div className="text-center">
               <h1 className="text-3xl font-bold text-foreground mb-2">
-                Quiz Submitted!
+                {quizResult.passed ? '✅ Quiz Passed' : '❌ Quiz Not Passed'}
               </h1>
               <p className="text-muted-foreground">
-                Here are your results for {quizState.moduleName}
+                Passing score: {quizResult.passingPercentage ?? passingPercentage}%
               </p>
             </div>
 
@@ -315,17 +344,17 @@ export default function QuizModule() {
             <div className="flex justify-center">
               <div
                 className={`w-32 h-32 rounded-full flex items-center justify-center border-4 ${
-                  quizResult.percent >= 60
+                  quizResult.passed
                     ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950'
-                    : 'border-amber-500 bg-amber-50 dark:bg-amber-950'
+                    : 'border-destructive bg-destructive/10'
                 }`}
               >
                 <div className="text-center">
                   <p
                     className={`text-4xl font-bold ${
-                      quizResult.percent >= 60
+                      quizResult.passed
                         ? 'text-emerald-600 dark:text-emerald-400'
-                        : 'text-amber-600 dark:text-amber-400'
+                        : 'text-destructive'
                     }`}
                   >
                     {quizResult.percent}%
@@ -339,18 +368,20 @@ export default function QuizModule() {
 
             {/* Status Badge */}
             <div className="flex justify-center">
-              {quizResult.percent >= 60 ? (
+              {quizResult.passed ? (
                 <Alert className="border-emerald-500 bg-emerald-50 dark:bg-emerald-950 max-w-md">
                   <CheckCircle className="h-4 w-4 text-emerald-600" />
                   <AlertDescription className="text-emerald-600 dark:text-emerald-400">
-                    Great job! You passed the quiz.
+                    {quizResult.moduleCompleted
+                      ? 'Module completed! The next module is now unlocked.'
+                      : 'Quiz passed. Complete all lessons and SOPs to finish this module.'}
                   </AlertDescription>
                 </Alert>
               ) : (
-                <Alert className="border-amber-500 bg-amber-50 dark:bg-amber-950 max-w-md">
-                  <AlertCircle className="h-4 w-4 text-amber-600" />
-                  <AlertDescription className="text-amber-600 dark:text-amber-400">
-                    You need to improve. Please review the material and try again.
+                <Alert className="border-destructive bg-destructive/10 max-w-md">
+                  <AlertCircle className="h-4 w-4 text-destructive" />
+                  <AlertDescription className="text-destructive">
+                    You did not meet the passing criteria. Please review the material and try again.
                   </AlertDescription>
                 </Alert>
               )}
@@ -453,7 +484,9 @@ export default function QuizModule() {
           <div className="flex gap-3 justify-center">
             <Button
               variant="outline"
-              onClick={() => navigate(-1)}
+              onClick={() =>
+                courseId ? navigate(`/courses/${courseId}`) : navigate(-1)
+              }
             >
               Return to Course
             </Button>
@@ -481,6 +514,12 @@ export default function QuizModule() {
           <h1 className="text-2xl font-bold text-foreground">{quizState.moduleName}</h1>
           <p className="text-sm text-muted-foreground">
             Question {currentQuestionIndex + 1} of {quizState.questions.length}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Passing score: {passingPercentage}%
+            {maxAttempts !== null
+              ? ` · Attempts: ${attemptsUsed}/${maxAttempts}`
+              : ' · Unlimited attempts'}
           </p>
 
           {/* Progress Bar */}

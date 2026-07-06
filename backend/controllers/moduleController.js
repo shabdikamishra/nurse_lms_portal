@@ -1,7 +1,26 @@
 import { Course, Module } from "../schemas/models.js";
+import { canManageCourse } from "../services/courseAccessService.js";
+
+async function assertCourseEditable(req, res, courseId) {
+  const { ok, course } = await canManageCourse(req.user, courseId);
+  if (!ok || !course) {
+    res.status(403).json({ message: "Forbidden" });
+    return null;
+  }
+  if (
+    req.user.role === "supervisor" &&
+    !["DRAFT", "REJECTED"].includes(course.status)
+  ) {
+    res.status(403).json({
+      message: "Course cannot be edited while pending approval or published",
+    });
+    return null;
+  }
+  return course;
+}
 
 function parseModulePayload(body = {}) {
-  return {
+  const payload = {
     title: typeof body.title === "string" ? body.title.trim() : "",
     targetRole: typeof body.targetRole === "string" ? body.targetRole.trim() : "",
     estimatedDuration:
@@ -12,6 +31,26 @@ function parseModulePayload(body = {}) {
     language: typeof body.language === "string" ? body.language.trim() : "",
     certification: typeof body.certification === "string" ? body.certification.trim() : "",
   };
+
+  if (body.passingPercentage !== undefined && body.passingPercentage !== "") {
+    const pct = Number(body.passingPercentage);
+    if (Number.isFinite(pct) && pct >= 0 && pct <= 100) {
+      payload.passingPercentage = pct;
+    }
+  }
+
+  if (body.maxQuizAttempts !== undefined) {
+    if (body.maxQuizAttempts === null || body.maxQuizAttempts === "") {
+      payload.maxQuizAttempts = null;
+    } else {
+      const attempts = Number(body.maxQuizAttempts);
+      if (Number.isFinite(attempts) && attempts >= 1) {
+        payload.maxQuizAttempts = attempts;
+      }
+    }
+  }
+
+  return payload;
 }
 
 export async function getCourseModules(req, res) {
@@ -34,10 +73,8 @@ export async function createModule(req, res) {
       return res.status(400).json({ message: "Module title is required" });
     }
 
-    const courseExists = await Course.exists({ _id: req.params.courseId });
-    if (!courseExists) {
-      return res.status(400).json({ message: "Invalid courseId" });
-    }
+    const course = await assertCourseEditable(req, res, req.params.courseId);
+    if (!course) return;
 
     const last = await Module.findOne({ courseId: req.params.courseId })
       .sort({ order: -1 })
@@ -70,6 +107,13 @@ export async function createModule(req, res) {
 
 export async function updateModule(req, res) {
   try {
+    const existing = await Module.findById(req.params.id).lean().exec();
+    if (!existing) {
+      return res.status(404).json({ message: "Module not found" });
+    }
+    const course = await assertCourseEditable(req, res, String(existing.courseId));
+    if (!course) return;
+
     const payload = parseModulePayload(req.body);
     const update = {};
 
@@ -87,10 +131,20 @@ export async function updateModule(req, res) {
       "mode",
       "language",
       "certification",
+      "passingPercentage",
+      "maxQuizAttempts",
     ]) {
-      if (typeof req.body[key] === "string") {
-        update[key] = payload[key];
+      if (typeof req.body[key] === "string" || typeof req.body[key] === "number") {
+        if (key === "passingPercentage" || key === "maxQuizAttempts") {
+          if (payload[key] !== undefined) update[key] = payload[key];
+        } else if (typeof req.body[key] === "string") {
+          update[key] = payload[key];
+        }
       }
+    }
+
+    if (req.body.maxQuizAttempts === null || req.body.maxQuizAttempts === "") {
+      update.maxQuizAttempts = null;
     }
 
     if (req.file) {
@@ -120,6 +174,13 @@ export async function updateModule(req, res) {
 
 export async function deleteModule(req, res) {
   try {
+    const existing = await Module.findById(req.params.id).lean().exec();
+    if (!existing) {
+      return res.status(404).json({ message: "Module not found" });
+    }
+    const course = await assertCourseEditable(req, res, String(existing.courseId));
+    if (!course) return;
+
     const deleted = await Module.findByIdAndDelete(req.params.id).lean().exec();
     if (!deleted) {
       return res.status(404).json({ message: "Module not found" });
@@ -141,6 +202,8 @@ export async function reorderModules(req, res) {
     }
 
     const courseId = req.params.courseId;
+    const course = await assertCourseEditable(req, res, courseId);
+    if (!course) return;
     const modules = await Module.find({ courseId }).lean().exec();
     const moduleIdSet = new Set(modules.map((m) => String(m._id)));
     for (const id of orderedModuleIds) {

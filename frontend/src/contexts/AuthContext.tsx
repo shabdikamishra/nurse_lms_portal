@@ -1,16 +1,30 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 
-export type UserRole = 'nurse' | 'admin';
+export type UserRole = 'nurse' | 'admin' | 'supervisor';
 
 export interface User {
   id: string;
+  _id?: string;
   email: string;
   name: string;
   role: UserRole;
   department?: string;
+  departmentId?: string;
   supervisor?: string;
   shiftTime?: string;
   avatar?: string;
+}
+
+function normalizeUser(raw: Record<string, unknown>): User {
+  return {
+    id: String(raw.id || raw._id || ''),
+    _id: raw._id ? String(raw._id) : undefined,
+    email: String(raw.email || ''),
+    name: String(raw.name || ''),
+    role: (raw.role as UserRole) || 'nurse',
+    department: raw.department ? String(raw.department) : undefined,
+    departmentId: raw.departmentId ? String(raw.departmentId) : undefined,
+  };
 }
 
 interface AuthContextType {
@@ -65,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return false;
       }
 
-      setUser(data.user as User);
+      setUser(normalizeUser(data.user as Record<string, unknown>));
       return true;
     } catch (err) {
       throw err;

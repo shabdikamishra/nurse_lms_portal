@@ -6,7 +6,17 @@ const userSchema = new mongoose.Schema(
     name: { type: String, required: true },
     empId: { type: String, required: true },
     department: { type: String, required: true },
-    role: { type: String, enum: ["nurse", "admin"], default: "nurse" },
+    departmentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Department",
+      default: null,
+      index: true,
+    },
+    role: {
+      type: String,
+      enum: ["nurse", "admin", "supervisor"],
+      default: "nurse",
+    },
     password: { type: String, required: true },
   },
   { timestamps: true }
@@ -29,6 +39,26 @@ const courseSchema = new mongoose.Schema(
     },
     title: { type: String, required: true, trim: true },
     description: { type: String, default: "", trim: true },
+    status: {
+      type: String,
+      enum: ["DRAFT", "PENDING_APPROVAL", "PUBLISHED", "REJECTED"],
+      default: "DRAFT",
+      index: true,
+    },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    approvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    approvalDate: { type: Date, default: null },
+    rejectionReason: { type: String, default: "", trim: true },
+    submittedAt: { type: Date, default: null },
+    publishedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
@@ -49,6 +79,13 @@ const moduleSchema = new mongoose.Schema(
     mode: { type: String, default: "", trim: true },
     language: { type: String, default: "", trim: true },
     certification: { type: String, default: "", trim: true },
+    passingPercentage: {
+      type: Number,
+      default: 70,
+      min: 0,
+      max: 100,
+    },
+    maxQuizAttempts: { type: Number, default: null, min: 1 },
     contentFile: {
       filename: { type: String, default: "" },
       originalName: { type: String, default: "" },
@@ -114,6 +151,12 @@ const enrollmentSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    registeredBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    registeredAt: { type: Date, default: Date.now },
   },
   { timestamps: true }
 );
@@ -127,6 +170,11 @@ const progressSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    courseId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Course",
+      index: true,
+    },
     moduleId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Module",
@@ -135,9 +183,17 @@ const progressSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["not-started", "in-progress", "completed"],
-      default: "not-started",
+      enum: ["NOT_STARTED", "IN_PROGRESS", "COMPLETED"],
+      default: "NOT_STARTED",
     },
+    lessonsViewed: [
+      { type: mongoose.Schema.Types.ObjectId, ref: "Lesson" },
+    ],
+    sopsViewed: [{ type: mongoose.Schema.Types.ObjectId, ref: "SOP" }],
+    contentViewed: { type: Boolean, default: false },
+    quizPassed: { type: Boolean, default: false },
+    quizScore: { type: Number, default: 0, min: 0, max: 100 },
+    quizAttemptsCount: { type: Number, default: 0, min: 0 },
     percent: { type: Number, default: 0, min: 0, max: 100 },
   },
   { timestamps: true }
@@ -199,6 +255,9 @@ const quizAttemptSchema = new mongoose.Schema(
     ],
     score: { type: Number, default: 0 },
     totalQuestions: { type: Number, default: 0 },
+    percent: { type: Number, default: 0, min: 0, max: 100 },
+    passed: { type: Boolean, default: false },
+    passingPercentage: { type: Number, default: 70, min: 0, max: 100 },
   },
   { timestamps: true }
 );
@@ -242,6 +301,64 @@ const moduleAssignmentSchema = new mongoose.Schema(
 );
 moduleAssignmentSchema.index({ nurseId: 1, moduleId: 1 }, { unique: true });
 
+const notificationSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+    type: {
+      type: String,
+      enum: [
+        "COURSE_APPROVAL_REQUEST",
+        "COURSE_APPROVED",
+        "COURSE_REJECTED",
+      ],
+      required: true,
+    },
+    title: { type: String, required: true, trim: true },
+    message: { type: String, default: "", trim: true },
+    courseId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Course",
+      default: null,
+    },
+    read: { type: Boolean, default: false, index: true },
+    metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+  },
+  { timestamps: true }
+);
+
+const auditLogSchema = new mongoose.Schema(
+  {
+    action: {
+      type: String,
+      enum: ["COURSE_SUBMITTED", "COURSE_APPROVED", "COURSE_REJECTED"],
+      required: true,
+    },
+    courseId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Course",
+      required: true,
+      index: true,
+    },
+    performedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    targetUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    details: { type: mongoose.Schema.Types.Mixed, default: {} },
+  },
+  { timestamps: true }
+);
+
 export const User = mongoose.model("User", userSchema);
 export const Department = mongoose.model("Department", departmentSchema);
 export const Course = mongoose.model("Course", courseSchema);
@@ -257,3 +374,5 @@ export const ModuleAssignment = mongoose.model(
   "ModuleAssignment",
   moduleAssignmentSchema
 );
+export const Notification = mongoose.model("Notification", notificationSchema);
+export const AuditLog = mongoose.model("AuditLog", auditLogSchema);

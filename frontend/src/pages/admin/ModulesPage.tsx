@@ -41,6 +41,8 @@ type CourseModule = {
   courseId: string;
   title: string;
   order: number;
+  passingPercentage?: number;
+  maxQuizAttempts?: number | null;
 };
 
 type Lesson = {

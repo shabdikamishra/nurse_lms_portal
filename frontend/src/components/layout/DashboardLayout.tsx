@@ -2,6 +2,7 @@ import { ReactNode, useState, useEffect } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { AppSidebar } from './AppSidebar';
+import { NotificationBell } from './NotificationBell';
 import { cn } from '@/lib/utils';
 
 interface DashboardLayoutProps {
@@ -37,7 +38,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           "ml-16 lg:ml-64"
         )}
       >
-        <div className="p-6 lg:p-8">
+        <div className="flex justify-end px-6 pt-4 lg:px-8">
+          <NotificationBell />
+        </div>
+        <div className="p-6 pt-2 lg:p-8 lg:pt-2">
           {children}
         </div>
       </main>

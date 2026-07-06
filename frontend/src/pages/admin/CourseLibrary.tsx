@@ -34,6 +34,12 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
+import {
+  courseStatusClass,
+  courseStatusLabel,
+  normalizeCourseStatus,
+  type CourseStatus,
+} from '@/lib/courseStatus';
 
 type Department = {
   _id: string;
@@ -45,6 +51,8 @@ type Course = {
   departmentId: string;
   title: string;
   description?: string;
+  status?: CourseStatus;
+  rejectionReason?: string;
 };
 
 type CourseModule = {
@@ -62,6 +70,8 @@ const API_BASE_URL =
 export default function CourseLibrary() {
   const navigate = useNavigate();
   const { authHeaders, user } = useAuth();
+  const isSupervisor = user?.role === 'supervisor';
+  const isAdmin = user?.role === 'admin';
   const [departments, setDepartments] = useState<Department[]>([]);
   const [isLoadingDepartments, setIsLoadingDepartments] = useState(false);
   const [deptSearch, setDeptSearch] = useState('');
@@ -202,6 +212,13 @@ export default function CourseLibrary() {
     void loadDepartments();
     void loadCourseLibraryStats();
   }, []);
+
+  useEffect(() => {
+    if (isSupervisor && user?.departmentId) {
+      setSelectedDepartmentId(user.departmentId);
+      setCourseDepartmentId(user.departmentId);
+    }
+  }, [isSupervisor, user?.departmentId]);
 
   const loadCourses = async (departmentId?: string) => {
     setIsLoadingCourses(true);
@@ -361,7 +378,11 @@ export default function CourseLibrary() {
     setEditingCourse(null);
     setCourseTitle('');
     setCourseDescription('');
-    setCourseDepartmentId(selectedDepartmentId || '');
+    setCourseDepartmentId(
+      isSupervisor && user?.departmentId
+        ? user.departmentId
+        : selectedDepartmentId || ''
+    );
     setCourseError('');
     setIsCourseDialogOpen(true);
   };
@@ -375,7 +396,7 @@ export default function CourseLibrary() {
     setIsCourseDialogOpen(true);
   };
 
-  const saveCourse = async (e: React.FormEvent) => {
+  const saveCourse = async (e: React.FormEvent, publishAfterSave = false) => {
     e.preventDefault();
     setCourseError('');
     const title = courseTitle.trim();
@@ -405,10 +426,20 @@ export default function CourseLibrary() {
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.message || 'Failed to save course');
 
+      let saved = data as Course;
+      if (publishAfterSave && saved._id) {
+        const pubRes = await fetch(`${API_BASE_URL}/api/courses/${saved._id}/publish`, {
+          method: 'PATCH',
+          headers: authHeaders(),
+        });
+        const pubData = await pubRes.json();
+        if (pubRes.ok) saved = pubData as Course;
+      }
+
       if (editingCourse) {
-        setCourses((prev) => prev.map((c) => (c._id === editingCourse._id ? (data as Course) : c)));
+        setCourses((prev) => prev.map((c) => (c._id === editingCourse._id ? saved : c)));
       } else {
-        setCourses((prev) => [data as Course, ...prev]);
+        setCourses((prev) => [saved, ...prev]);
       }
       void loadCourseLibraryStats();
       setIsCourseDialogOpen(false);
@@ -417,6 +448,45 @@ export default function CourseLibrary() {
     } finally {
       setCourseSaving(false);
     }
+  };
+
+  const setCourseStatus = async (course: Course, action: 'publish' | 'draft') => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/courses/${course._id}/${action}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.message || `Failed to ${action} course`);
+      setCourses((prev) => prev.map((c) => (c._id === course._id ? (data as Course) : c)));
+    } catch (err: any) {
+      alert(err?.message || `Failed to ${action} course`);
+    }
+  };
+
+  const submitForApproval = async (course: Course) => {
+    const ok = window.confirm(
+      `Submit "${course.title}" to admin for approval? It will not be visible to nurses until approved.`
+    );
+    if (!ok) return;
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/courses/${course._id}/submit-approval`,
+        { method: 'PATCH', headers: authHeaders() }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.message || 'Failed to submit course');
+      setCourses((prev) => prev.map((c) => (c._id === course._id ? (data as Course) : c)));
+      alert('Course submitted for admin approval.');
+    } catch (err: any) {
+      alert(err?.message || 'Failed to submit course');
+    }
+  };
+
+  const courseIsEditable = (course: Course) => {
+    const status = normalizeCourseStatus(course.status);
+    if (isAdmin) return true;
+    return status === 'DRAFT' || status === 'REJECTED';
   };
 
   const deleteCourse = async (course: Course) => {
@@ -662,9 +732,13 @@ export default function CourseLibrary() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Course Library Management</h1>
+            <h1 className="text-2xl font-bold text-foreground">
+              {isSupervisor ? 'Department Course Library' : 'Course Library Management'}
+            </h1>
             <p className="text-muted-foreground mt-1">
-              Manage departments, modules, and question banks
+              {isSupervisor
+                ? 'Create courses and submit them for admin approval before nurses can access them'
+                : 'Manage departments, modules, and question banks'}
             </p>
           </div>
         </div>
@@ -690,9 +764,9 @@ export default function CourseLibrary() {
         </div>
 
         {/* Tabs */}
-        <Tabs defaultValue="departments" className="w-full">
+        <Tabs defaultValue={isSupervisor ? 'modules' : 'departments'} className="w-full">
           <TabsList>
-            <TabsTrigger value="departments">Departments</TabsTrigger>
+            {isAdmin && <TabsTrigger value="departments">Departments</TabsTrigger>}
             <TabsTrigger value="modules">Modules</TabsTrigger>
             <TabsTrigger value="questions">Question Bank</TabsTrigger>
           </TabsList>
@@ -858,7 +932,7 @@ export default function CourseLibrary() {
                           Courses belong to a department and contain modules.
                         </DialogDescription>
                       </DialogHeader>
-                      <form onSubmit={saveCourse} className="space-y-4 py-4">
+                      <form onSubmit={(e) => saveCourse(e, false)} className="space-y-4 py-4">
                         <div className="space-y-2">
                           <Label>Department</Label>
                           <select
@@ -900,12 +974,19 @@ export default function CourseLibrary() {
                           <p className="text-sm text-destructive">{courseError}</p>
                         )}
 
-                        <DialogFooter>
+                        <DialogFooter className="flex-col sm:flex-row gap-2">
                           <Button type="button" variant="outline" onClick={() => setIsCourseDialogOpen(false)}>
                             Cancel
                           </Button>
-                          <Button type="submit" disabled={courseSaving}>
-                            {courseSaving ? 'Saving...' : editingCourse ? 'Save Changes' : 'Create Course'}
+                          <Button type="submit" variant="outline" disabled={courseSaving}>
+                            {courseSaving ? 'Saving...' : '💾 Save Draft'}
+                          </Button>
+                          <Button
+                            type="button"
+                            disabled={courseSaving}
+                            onClick={(e) => void saveCourse(e as unknown as React.FormEvent, true)}
+                          >
+                            {courseSaving ? 'Publishing...' : '🚀 Publish Course'}
                           </Button>
                         </DialogFooter>
                       </form>
@@ -936,6 +1017,18 @@ export default function CourseLibrary() {
                             <p className="text-xs text-muted-foreground truncate">
                               {departments.find((d) => d._id === c.departmentId)?.name || 'Unknown department'}
                             </p>
+                            <span
+                              className={`inline-block mt-1 text-xs px-2 py-0.5 rounded-full ${
+                                courseStatusClass[normalizeCourseStatus(c.status)]
+                              }`}
+                            >
+                              {courseStatusLabel[normalizeCourseStatus(c.status)]}
+                            </span>
+                            {c.rejectionReason && (
+                              <p className="text-xs text-destructive mt-1 line-clamp-2">
+                                {c.rejectionReason}
+                              </p>
+                            )}
                           </div>
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -944,15 +1037,36 @@ export default function CourseLibrary() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => openEditCourse(c)}>
-                                <Edit className="w-4 h-4 mr-2" /> Edit
-                              </DropdownMenuItem>
+                              {courseIsEditable(c) && (
+                                <DropdownMenuItem onClick={() => openEditCourse(c)}>
+                                  <Edit className="w-4 h-4 mr-2" /> Edit
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuItem onClick={() => navigate(`/modules-page?courseId=${c._id}`)}>
                                 <BookOpen className="w-4 h-4 mr-2" /> Manage Modules
                               </DropdownMenuItem>
+                              {isAdmin && normalizeCourseStatus(c.status) !== 'PUBLISHED' && (
+                                <DropdownMenuItem onClick={() => void setCourseStatus(c, 'publish')}>
+                                  Publish Course
+                                </DropdownMenuItem>
+                              )}
+                              {isAdmin && normalizeCourseStatus(c.status) === 'PUBLISHED' && (
+                                <DropdownMenuItem onClick={() => void setCourseStatus(c, 'draft')}>
+                                  Save as Draft
+                                </DropdownMenuItem>
+                              )}
+                              {isSupervisor &&
+                                (normalizeCourseStatus(c.status) === 'DRAFT' ||
+                                  normalizeCourseStatus(c.status) === 'REJECTED') && (
+                                  <DropdownMenuItem onClick={() => void submitForApproval(c)}>
+                                    Submit to Admin for Approval
+                                  </DropdownMenuItem>
+                                )}
+                              {courseIsEditable(c) && (
                               <DropdownMenuItem className="text-destructive" onClick={() => deleteCourse(c)}>
                                 <Trash2 className="w-4 h-4 mr-2" /> Delete
                               </DropdownMenuItem>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>

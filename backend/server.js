@@ -450,6 +450,126 @@ app.get("/api/admin/users", requireAdmin(), async (req, res) => {
   }
 });
 
+// Admin - update user
+app.patch("/api/admin/users/:id", requireAdmin(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, empId, department, departmentId, role, status } = req.body || {};
+
+    const user = await User.findById(id).exec();
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (typeof name === "string" && name.trim()) {
+      user.name = name.trim();
+    }
+    if (typeof empId === "string" && empId.trim()) {
+      user.empId = empId.trim();
+    }
+    if (typeof role === "string" && ["nurse", "supervisor", "admin"].includes(role)) {
+      if (user.role === "admin" && role !== "admin") {
+        const adminCount = await User.countDocuments({ role: "admin" }).exec();
+        if (adminCount <= 1) {
+          return res.status(400).json({ message: "Cannot change role of the only admin" });
+        }
+      }
+      user.role = role;
+    }
+    if (typeof status === "string" && ["active", "deactivated", "archived"].includes(status)) {
+      user.status = status;
+    }
+
+    let resolvedDepartmentId = departmentId ?? user.departmentId;
+    let departmentName =
+      typeof department === "string" ? department.trim() : user.department;
+
+    if (departmentId) {
+      const dept = await Department.findById(departmentId).lean().exec();
+      if (!dept) {
+        return res.status(400).json({ message: "Invalid departmentId" });
+      }
+      resolvedDepartmentId = dept._id;
+      departmentName = dept.name;
+    } else if (typeof department === "string" && department.trim()) {
+      const dept = await Department.findOne({ name: department.trim() }).exec();
+      if (dept) resolvedDepartmentId = dept._id;
+    }
+
+    user.department = departmentName;
+    user.departmentId = resolvedDepartmentId;
+
+    if (user.role === "supervisor" && !user.departmentId) {
+      return res.status(400).json({
+        message: "Supervisors must be assigned to a valid department",
+      });
+    }
+
+    await user.save();
+
+    const userObj = user.toObject();
+    const { password: _pw, ...userWithoutPassword } = userObj;
+    return res.json({ message: "User updated successfully", user: userWithoutPassword });
+  } catch (err) {
+    console.error("Error updating user", err);
+    return res.status(500).json({ message: "Failed to update user" });
+  }
+});
+
+// Admin - delete user
+app.delete("/api/admin/users/:id", requireAdmin(), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await User.findById(id).exec();
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (String(user._id) === String(req.user._id)) {
+      return res.status(400).json({ message: "You cannot delete your own account" });
+    }
+
+    if (user.role === "admin") {
+      const adminCount = await User.countDocuments({ role: "admin" }).exec();
+      if (adminCount <= 1) {
+        return res.status(400).json({ message: "Cannot delete the only admin account" });
+      }
+    }
+
+    await User.deleteOne({ _id: id }).exec();
+    return res.json({ message: "User deleted successfully" });
+  } catch (err) {
+    console.error("Error deleting user", err);
+    return res.status(500).json({ message: "Failed to delete user" });
+  }
+});
+
+// Admin - send reminder to user
+app.post("/api/admin/users/:id/reminder", requireAdmin(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id).exec();
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const { createNotification } = await import("./services/notificationService.js");
+    await createNotification({
+      userId: user._id,
+      type: "USER_REMINDER",
+      title: "Training reminder",
+      message: `Hi ${user.name}, please complete your assigned training modules.`,
+      metadata: { sentBy: req.user._id, sentByName: req.user.name },
+    });
+
+    return res.json({ message: `Reminder sent to ${user.name}` });
+  } catch (err) {
+    console.error("Error sending reminder", err);
+    return res.status(500).json({ message: "Failed to send reminder" });
+  }
+});
+
 app.get("/api/admin/course-library-stats", requireAdminOrSupervisor(), async (req, res) => {
   try {
     let courseFilter = {};

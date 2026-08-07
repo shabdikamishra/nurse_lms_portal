@@ -17,6 +17,12 @@ const userSchema = new mongoose.Schema(
       enum: ["nurse", "admin", "supervisor"],
       default: "nurse",
     },
+    status: {
+      type: String,
+      enum: ["active", "deactivated", "archived"],
+      default: "active",
+      index: true,
+    },
     password: { type: String, required: true },
   },
   { timestamps: true }
@@ -315,6 +321,7 @@ const notificationSchema = new mongoose.Schema(
         "COURSE_APPROVAL_REQUEST",
         "COURSE_APPROVED",
         "COURSE_REJECTED",
+        "USER_REMINDER",
       ],
       required: true,
     },

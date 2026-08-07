@@ -16,6 +16,7 @@ import {
   MoreHorizontal,
   Edit,
   Trash2,
+  ArrowLeft,
 } from 'lucide-react';
 import {
   Dialog,
@@ -72,6 +73,10 @@ export default function CourseLibrary() {
   const { authHeaders, user } = useAuth();
   const isSupervisor = user?.role === 'supervisor';
   const isAdmin = user?.role === 'admin';
+
+  const [activeTab, setActiveTab] = useState<string>('departments');
+  const [isViewingDepartmentDetail, setIsViewingDepartmentDetail] = useState<boolean>(isSupervisor);
+
   const [departments, setDepartments] = useState<Department[]>([]);
   const [isLoadingDepartments, setIsLoadingDepartments] = useState(false);
   const [deptSearch, setDeptSearch] = useState('');
@@ -217,6 +222,7 @@ export default function CourseLibrary() {
     if (isSupervisor && user?.departmentId) {
       setSelectedDepartmentId(user.departmentId);
       setCourseDepartmentId(user.departmentId);
+      setIsViewingDepartmentDetail(true);
     }
   }, [isSupervisor, user?.departmentId]);
 
@@ -726,6 +732,620 @@ export default function CourseLibrary() {
     }
   };
 
+  const handleDepartmentDoubleClick = (dept: Department) => {
+    setSelectedDepartmentId(dept._id);
+    setCourseDepartmentId(dept._id);
+    setSelectedCourseId('');
+    setIsViewingDepartmentDetail(true);
+    setActiveTab('departments');
+  };
+
+  const renderQuestionBank = () => {
+    return (
+      <div className="space-y-4 animate-fade-in">
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input placeholder="Search questions..." className="pl-9" />
+          </div>
+          <Button>
+            <Plus className="w-4 h-4 mr-2" />
+            Add Question
+          </Button>
+        </div>
+
+        <div className="healthcare-card overflow-x-auto">
+          <table className="table-healthcare">
+            <thead>
+              <tr>
+                <th>Question</th>
+                <th>Module</th>
+                <th>Type</th>
+                <th>Difficulty</th>
+                <th className="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {questionBank.map((q) => (
+                <tr key={q.id}>
+                  <td className="font-medium text-foreground max-w-xs truncate">{q.question}</td>
+                  <td>{q.module}</td>
+                  <td>{q.type}</td>
+                  <td>
+                    <span className={`text-xs font-medium px-2 py-1 rounded-full ${
+                      q.difficulty === 'Easy' ? 'bg-success/10 text-success' :
+                      q.difficulty === 'Medium' ? 'bg-warning/10 text-warning' :
+                      'bg-destructive/10 text-destructive'
+                    }`}>
+                      {q.difficulty}
+                    </span>
+                  </td>
+                  <td className="text-right">
+                    <Button variant="ghost" size="sm">Edit</Button>
+                  </td>
+                </tr>
+              ))}
+              {questionBank.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="text-center py-8 text-muted-foreground text-sm">
+                    No questions in the question bank.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  const renderCoursesAndModules = (hideFilter = false) => {
+    return (
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 animate-fade-in">
+        {/* Courses */}
+        <div className="healthcare-card">
+          <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between mb-4">
+            <div className="flex-1 min-w-0 space-y-2">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search courses..."
+                  className="pl-9"
+                  value={courseSearch}
+                  onChange={(e) => setCourseSearch(e.target.value)}
+                />
+              </div>
+              {!hideFilter && (
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Label className="text-sm text-muted-foreground">Filter by Department</Label>
+                  <select
+                    className="border border-border rounded-md bg-background text-foreground px-2 py-1 text-sm"
+                    value={selectedDepartmentId}
+                    onChange={(e) => {
+                      setSelectedDepartmentId(e.target.value);
+                      setSelectedCourseId('');
+                    }}
+                  >
+                    <option value="">All</option>
+                    {departments.map((d) => (
+                      <option key={d._id} value={d._id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+
+            <Dialog open={isCourseDialogOpen} onOpenChange={setIsCourseDialogOpen}>
+              <DialogTrigger asChild>
+                <Button onClick={openCreateCourse}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Course
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>
+                    {editingCourse ? 'Edit Course' : 'Create Course'}
+                  </DialogTitle>
+                  <DialogDescription>
+                    Courses belong to a department and contain modules.
+                  </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={(e) => saveCourse(e, false)} className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label>Department</Label>
+                    <select
+                      className="w-full border border-border rounded-md bg-background text-foreground px-3 py-2"
+                      value={courseDepartmentId}
+                      onChange={(e) => setCourseDepartmentId(e.target.value)}
+                      required
+                      disabled={hideFilter}
+                    >
+                      <option value="" disabled>
+                        Select department
+                      </option>
+                      {departments.map((d) => (
+                        <option key={d._id} value={d._id}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="course-title">Course Title</Label>
+                    <Input
+                      id="course-title"
+                      value={courseTitle}
+                      onChange={(e) => setCourseTitle(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="course-desc">Description</Label>
+                    <Textarea
+                      id="course-desc"
+                      value={courseDescription}
+                      onChange={(e) => setCourseDescription(e.target.value)}
+                      placeholder="Optional description"
+                    />
+                  </div>
+
+                  {courseError && (
+                    <p className="text-sm text-destructive">{courseError}</p>
+                  )}
+
+                  <DialogFooter className="flex-col sm:flex-row gap-2">
+                    <Button type="button" variant="outline" onClick={() => setIsCourseDialogOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button type="submit" variant="outline" disabled={courseSaving}>
+                      {courseSaving ? 'Saving...' : '💾 Save Draft'}
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={courseSaving}
+                      onClick={(e) => void saveCourse(e as unknown as React.FormEvent, true)}
+                    >
+                      {courseSaving ? 'Publishing...' : '🚀 Publish Course'}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
+          </div>
+
+          {isLoadingCourses ? (
+            <p className="text-sm text-muted-foreground">Loading courses...</p>
+          ) : filteredCourses.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No courses yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {filteredCourses.map((c) => (
+                <button
+                  key={c._id}
+                  type="button"
+                  onClick={() => setSelectedCourseId(c._id)}
+                  onDoubleClick={() => navigate(`/modules-page?courseId=${c._id}`)}
+                  className={`w-full text-left rounded-lg border px-3 py-2 transition-all duration-200 select-none ${
+                    selectedCourseId === c._id
+                      ? 'border-primary bg-primary/5 shadow-sm'
+                      : 'border-border hover:border-primary/50 hover:bg-accent/5'
+                  }`}
+                  title="Click to view modules, Double-click to manage modules page"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium text-foreground truncate">{c.title}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {departments.find((d) => d._id === c.departmentId)?.name || 'Unknown department'}
+                      </p>
+                      <span
+                        className={`inline-block mt-1 text-xs px-2 py-0.5 rounded-full ${
+                          courseStatusClass[normalizeCourseStatus(c.status)]
+                        }`}
+                      >
+                        {courseStatusLabel[normalizeCourseStatus(c.status)]}
+                      </span>
+                      {c.rejectionReason && (
+                        <p className="text-xs text-destructive mt-1 line-clamp-2">
+                          {c.rejectionReason}
+                        </p>
+                      )}
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => e.stopPropagation()}>
+                          <MoreHorizontal className="w-4 h-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        {courseIsEditable(c) && (
+                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openEditCourse(c); }}>
+                            <Edit className="w-4 h-4 mr-2" /> Edit
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); navigate(`/modules-page?courseId=${c._id}`); }}>
+                          <BookOpen className="w-4 h-4 mr-2" /> Manage Modules
+                        </DropdownMenuItem>
+                        {isAdmin && normalizeCourseStatus(c.status) !== 'PUBLISHED' && (
+                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); void setCourseStatus(c, 'publish'); }}>
+                            Publish Course
+                          </DropdownMenuItem>
+                        )}
+                        {isAdmin && normalizeCourseStatus(c.status) === 'PUBLISHED' && (
+                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); void setCourseStatus(c, 'draft'); }}>
+                            Save as Draft
+                          </DropdownMenuItem>
+                        )}
+                        {isSupervisor &&
+                          (normalizeCourseStatus(c.status) === 'DRAFT' ||
+                            normalizeCourseStatus(c.status) === 'REJECTED') && (
+                            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); void submitForApproval(c); }}>
+                              Submit to Admin for Approval
+                            </DropdownMenuItem>
+                          )}
+                        {courseIsEditable(c) && (
+                        <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); deleteCourse(c); }}>
+                          <Trash2 className="w-4 h-4 mr-2" /> Delete
+                        </DropdownMenuItem>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Modules for selected course */}
+        <div className="healthcare-card">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-lg font-semibold text-foreground">Modules</h3>
+              <p className="text-sm text-muted-foreground">
+                {selectedCourse ? `Course: ${selectedCourse.title}` : 'Select a course to manage modules'}
+              </p>
+            </div>
+            <Dialog open={isModuleDialogOpen} onOpenChange={setIsModuleDialogOpen}>
+              <DialogTrigger asChild>
+                <Button onClick={openCreateModule} disabled={!selectedCourseId}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Module
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>
+                    {editingModule ? 'Edit Module' : 'Create Module'}
+                  </DialogTitle>
+                  <DialogDescription>
+                    Modules belong to a course and can be reordered.
+                  </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={saveModule} className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="module-title">Module Title</Label>
+                    <Input
+                      id="module-title"
+                      value={moduleTitle}
+                      onChange={(e) => setModuleTitle(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="module-role">Target Role</Label>
+                      <Input
+                        id="module-role"
+                        value={moduleTargetRole}
+                        onChange={(e) => setModuleTargetRole(e.target.value)}
+                        placeholder="e.g., Staff Nurse"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="module-duration">Estimated Duration</Label>
+                      <Input
+                        id="module-duration"
+                        value={moduleEstimatedDuration}
+                        onChange={(e) => setModuleEstimatedDuration(e.target.value)}
+                        placeholder="e.g., 45 mins"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="module-objectives">Learning Objectives</Label>
+                      <Input
+                        id="module-objectives"
+                        value={moduleLearningObjectives}
+                        onChange={(e) => setModuleLearningObjectives(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="module-mode">Mode</Label>
+                      <Input
+                        id="module-mode"
+                        value={moduleMode}
+                        onChange={(e) => setModuleMode(e.target.value)}
+                        placeholder="Online / Blended"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="module-language">Language</Label>
+                      <Input
+                        id="module-language"
+                        value={moduleLanguage}
+                        onChange={(e) => setModuleLanguage(e.target.value)}
+                        placeholder="English"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="module-certification">Certification</Label>
+                      <Input
+                        id="module-certification"
+                        value={moduleCertification}
+                        onChange={(e) => setModuleCertification(e.target.value)}
+                        placeholder="Optional"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="module-content-file">
+                      Upload Course Content (PDF, Video, SCORM, Text, MP4)
+                    </Label>
+                    <Input
+                      id="module-content-file"
+                      type="file"
+                      accept=".pdf,.txt,.zip,.scorm,video/*"
+                      onChange={(e) => setModuleContentFile(e.target.files?.[0] ?? null)}
+                    />
+                  </div>
+
+                  {moduleError && (
+                    <p className="text-sm text-destructive">{moduleError}</p>
+                  )}
+
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setIsModuleDialogOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button type="submit" disabled={moduleSaving}>
+                      {moduleSaving ? 'Saving...' : editingModule ? 'Save Changes' : 'Create Module'}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
+          </div>
+
+          {!selectedCourseId ? (
+            <p className="text-sm text-muted-foreground">Choose a course from the left.</p>
+          ) : isLoadingModules ? (
+            <p className="text-sm text-muted-foreground">Loading modules...</p>
+          ) : modules.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No modules yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {modules
+                .slice()
+                .sort((a, b) => a.order - b.order)
+                .map((m) => (
+                  <div
+                    key={m._id}
+                    className={`flex items-center justify-between gap-2 border rounded-lg px-3 py-2 cursor-pointer transition-colors ${
+                      selectedModuleId === m._id
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border'
+                    }`}
+                    onClick={() => setSelectedModuleId(m._id)}
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium text-foreground truncate">
+                        {m.order}. {m.title}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => e.stopPropagation()}>
+                            <MoreHorizontal className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openEditModule(m); }}>
+                            <Edit className="w-4 h-4 mr-2" /> Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); deleteModule(m); }}>
+                            <Trash2 className="w-4 h-4 mr-2" /> Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
+
+          <div className="mt-6 pt-6 border-t border-border">
+            <p className="text-sm text-muted-foreground">
+              Use <span className="font-medium text-foreground">Manage Modules</span> on a course to open the dedicated module management page.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderDepartmentsGrid = () => {
+    return (
+      <div className="space-y-4 animate-fade-in">
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Search departments..."
+              className="pl-9"
+              value={deptSearch}
+              onChange={(e) => setDeptSearch(e.target.value)}
+            />
+          </div>
+          <Dialog open={isDeptDialogOpen} onOpenChange={setIsDeptDialogOpen}>
+            <DialogTrigger asChild>
+              <Button onClick={openCreateDept}>
+                <Plus className="w-4 h-4 mr-2" />
+                Add Department
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>
+                  {editingDept ? 'Edit Department' : 'Create New Department'}
+                </DialogTitle>
+                <DialogDescription>
+                  Add a new department to organize training modules
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={saveDept} className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="dept-name">Department Name</Label>
+                  <Input
+                    id="dept-name"
+                    placeholder="e.g., Intensive Care Unit"
+                    value={deptName}
+                    onChange={(e) => setDeptName(e.target.value)}
+                    required
+                  />
+                </div>
+
+                {deptError && (
+                  <p className="text-sm text-destructive">{deptError}</p>
+                )}
+
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setIsDeptDialogOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={deptSaving}>
+                    {deptSaving
+                      ? 'Saving...'
+                      : editingDept
+                        ? 'Save Changes'
+                        : 'Create Department'}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {isLoadingDepartments ? (
+            <div className="text-sm text-muted-foreground col-span-full py-4 text-center">Loading departments...</div>
+          ) : filteredDepartments.length === 0 ? (
+            <div className="text-sm text-muted-foreground col-span-full py-4 text-center">No departments found.</div>
+          ) : (
+            filteredDepartments.map((dept) => (
+              <div 
+                key={dept._id} 
+                onDoubleClick={() => handleDepartmentDoubleClick(dept)}
+                className="healthcare-card cursor-pointer hover:border-primary/50 select-none transition-all duration-200 hover:shadow-md active:scale-98"
+                title="Double-click to open Department Library"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                    <FolderOpen className="w-5 h-5 text-primary" />
+                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => e.stopPropagation()}>
+                        <MoreHorizontal className="w-4 h-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openEditDept(dept); }}>
+                        <Edit className="w-4 h-4 mr-2" /> Edit
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleDepartmentDoubleClick(dept); }}>
+                        <BookOpen className="w-4 h-4 mr-2" /> View Courses
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-destructive"
+                        onClick={(e) => { e.stopPropagation(); deleteDept(dept); }}
+                      >
+                        <Trash2 className="w-4 h-4 mr-2" /> Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+                <h4 className="font-semibold text-foreground mb-1">{dept.name}</h4>
+                <p className="text-sm text-muted-foreground">
+                  Double-click to open
+                </p>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderDepartmentDetail = () => {
+    const activeDept = departments.find((d) => d._id === selectedDepartmentId);
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            {isAdmin && (
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => {
+                  setIsViewingDepartmentDetail(false);
+                  setSelectedDepartmentId('');
+                  setSelectedCourseId('');
+                }}
+                className="h-9 w-9"
+                title="Back to Departments"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </Button>
+            )}
+            <div>
+              <h2 className="text-xl font-bold text-foreground">
+                {activeDept?.name || 'Department'} Library
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                {isSupervisor
+                  ? 'Manage courses and modules for your department'
+                  : 'Manage courses, modules, and question bank for this department'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <Tabs defaultValue="courses" className="w-full">
+          <TabsList className="mb-4">
+            <TabsTrigger value="courses">Courses & Modules</TabsTrigger>
+            <TabsTrigger value="questions">Question Bank</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="courses" className="mt-4">
+            {renderCoursesAndModules(true)}
+          </TabsContent>
+
+          <TabsContent value="questions" className="mt-4">
+            {renderQuestionBank()}
+          </TabsContent>
+        </Tabs>
+      </div>
+    );
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
@@ -751,8 +1371,37 @@ export default function CourseLibrary() {
             { label: 'Question Bank', value: libraryStats.questionBank, icon: FileQuestion, color: 'text-warning' },
             { label: 'Active Nurses', value: libraryStats.activeNurses, icon: Users, color: 'text-info' },
           ].map((stat) => (
-            <div key={stat.label} className="healthcare-card flex items-center gap-4">
-              <div className={`w-10 h-10 rounded-lg bg-muted flex items-center justify-center ${stat.color}`}>
+            <div 
+              key={stat.label} 
+              onDoubleClick={() => {
+                if (stat.label === 'Departments') {
+                  if (isSupervisor) return;
+                  setIsViewingDepartmentDetail(false);
+                  setSelectedDepartmentId('');
+                  setSelectedCourseId('');
+                  setActiveTab('departments');
+                } else if (stat.label === 'Total Modules') {
+                  setIsViewingDepartmentDetail(false);
+                  setSelectedDepartmentId('');
+                  setSelectedCourseId('');
+                  setActiveTab('modules');
+                } else if (stat.label === 'Question Bank') {
+                  setIsViewingDepartmentDetail(false);
+                  setSelectedDepartmentId('');
+                  setSelectedCourseId('');
+                  setActiveTab('questions');
+                } else if (stat.label === 'Active Nurses') {
+                  if (isAdmin) {
+                    navigate('/users');
+                  } else if (isSupervisor) {
+                    navigate('/supervisor/register-nurse');
+                  }
+                }
+              }}
+              className="healthcare-card flex items-center gap-4 cursor-pointer hover:border-primary/50 select-none transition-all duration-200 hover:shadow-md active:scale-98 group"
+              title={stat.label === 'Active Nurses' ? "Double-click to view Users" : `Double-click to view ${stat.label}`}
+            >
+              <div className={`w-10 h-10 rounded-lg bg-muted flex items-center justify-center ${stat.color} group-hover:scale-110 transition-transform duration-200`}>
                 <stat.icon className="w-5 h-5" />
               </div>
               <div>
@@ -763,542 +1412,23 @@ export default function CourseLibrary() {
           ))}
         </div>
 
-        {/* Tabs */}
-        <Tabs defaultValue={isSupervisor ? 'modules' : 'departments'} className="w-full">
-          <TabsList>
-            {isAdmin && <TabsTrigger value="departments">Departments</TabsTrigger>}
-            <TabsTrigger value="modules">Modules</TabsTrigger>
-            <TabsTrigger value="questions">Question Bank</TabsTrigger>
-          </TabsList>
+        {/* Tabs wrapper */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          {/* Note: TabsList has been removed as per requirements. Navigation is handled by double-clicking the stats analytics above. */}
 
-          {/* Departments Tab */}
+          {/* Departments/Detail Tab */}
           <TabsContent value="departments" className="mt-4 space-y-4">
-            <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-              <div className="relative flex-1 max-w-md">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search departments..."
-                  className="pl-9"
-                  value={deptSearch}
-                  onChange={(e) => setDeptSearch(e.target.value)}
-                />
-              </div>
-              <Dialog open={isDeptDialogOpen} onOpenChange={setIsDeptDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button onClick={openCreateDept}>
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add Department
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>
-                      {editingDept ? 'Edit Department' : 'Create New Department'}
-                    </DialogTitle>
-                    <DialogDescription>
-                      Add a new department to organize training modules
-                    </DialogDescription>
-                  </DialogHeader>
-                  <form onSubmit={saveDept} className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="dept-name">Department Name</Label>
-                      <Input
-                        id="dept-name"
-                        placeholder="e.g., Intensive Care Unit"
-                        value={deptName}
-                        onChange={(e) => setDeptName(e.target.value)}
-                        required
-                      />
-                    </div>
-
-                    {deptError && (
-                      <p className="text-sm text-destructive">{deptError}</p>
-                    )}
-
-                    <DialogFooter>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setIsDeptDialogOpen(false)}
-                      >
-                        Cancel
-                      </Button>
-                      <Button type="submit" disabled={deptSaving}>
-                        {deptSaving
-                          ? 'Saving...'
-                          : editingDept
-                            ? 'Save Changes'
-                            : 'Create Department'}
-                      </Button>
-                    </DialogFooter>
-                  </form>
-                </DialogContent>
-              </Dialog>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {isLoadingDepartments ? (
-                <div className="text-sm text-muted-foreground">Loading departments...</div>
-              ) : filteredDepartments.length === 0 ? (
-                <div className="text-sm text-muted-foreground">No departments found.</div>
-              ) : (
-                filteredDepartments.map((dept) => (
-                <div key={dept._id} className="healthcare-card">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                      <FolderOpen className="w-5 h-5 text-primary" />
-                    </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <MoreHorizontal className="w-4 h-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => openEditDept(dept)}>
-                          <Edit className="w-4 h-4 mr-2" /> Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <BookOpen className="w-4 h-4 mr-2" /> View Courses
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-destructive"
-                          onClick={() => deleteDept(dept)}
-                        >
-                          <Trash2 className="w-4 h-4 mr-2" /> Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                  <h4 className="font-semibold text-foreground mb-1">{dept.name}</h4>
-                  <p className="text-sm text-muted-foreground">
-                    Department
-                  </p>
-                </div>
-              ))
-              )}
-            </div>
+            {isViewingDepartmentDetail ? renderDepartmentDetail() : renderDepartmentsGrid()}
           </TabsContent>
 
           {/* Modules Tab */}
           <TabsContent value="modules" className="mt-4 space-y-4">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Courses */}
-              <div className="healthcare-card">
-                <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between mb-4">
-                  <div className="flex-1 min-w-0 space-y-2">
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Search courses..."
-                        className="pl-9"
-                        value={courseSearch}
-                        onChange={(e) => setCourseSearch(e.target.value)}
-                      />
-                    </div>
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <Label className="text-sm text-muted-foreground">Filter by Department</Label>
-                      <select
-                        className="border border-border rounded-md bg-background text-foreground px-2 py-1 text-sm"
-                        value={selectedDepartmentId}
-                        onChange={(e) => {
-                          setSelectedDepartmentId(e.target.value);
-                          setSelectedCourseId('');
-                        }}
-                      >
-                        <option value="">All</option>
-                        {departments.map((d) => (
-                          <option key={d._id} value={d._id}>
-                            {d.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  <Dialog open={isCourseDialogOpen} onOpenChange={setIsCourseDialogOpen}>
-                    <DialogTrigger asChild>
-                      <Button onClick={openCreateCourse}>
-                        <Plus className="w-4 h-4 mr-2" />
-                        Add Course
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>
-                          {editingCourse ? 'Edit Course' : 'Create Course'}
-                        </DialogTitle>
-                        <DialogDescription>
-                          Courses belong to a department and contain modules.
-                        </DialogDescription>
-                      </DialogHeader>
-                      <form onSubmit={(e) => saveCourse(e, false)} className="space-y-4 py-4">
-                        <div className="space-y-2">
-                          <Label>Department</Label>
-                          <select
-                            className="w-full border border-border rounded-md bg-background text-foreground px-3 py-2"
-                            value={courseDepartmentId}
-                            onChange={(e) => setCourseDepartmentId(e.target.value)}
-                            required
-                          >
-                            <option value="" disabled>
-                              Select department
-                            </option>
-                            {departments.map((d) => (
-                              <option key={d._id} value={d._id}>
-                                {d.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="course-title">Course Title</Label>
-                          <Input
-                            id="course-title"
-                            value={courseTitle}
-                            onChange={(e) => setCourseTitle(e.target.value)}
-                            required
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="course-desc">Description</Label>
-                          <Textarea
-                            id="course-desc"
-                            value={courseDescription}
-                            onChange={(e) => setCourseDescription(e.target.value)}
-                            placeholder="Optional description"
-                          />
-                        </div>
-
-                        {courseError && (
-                          <p className="text-sm text-destructive">{courseError}</p>
-                        )}
-
-                        <DialogFooter className="flex-col sm:flex-row gap-2">
-                          <Button type="button" variant="outline" onClick={() => setIsCourseDialogOpen(false)}>
-                            Cancel
-                          </Button>
-                          <Button type="submit" variant="outline" disabled={courseSaving}>
-                            {courseSaving ? 'Saving...' : '💾 Save Draft'}
-                          </Button>
-                          <Button
-                            type="button"
-                            disabled={courseSaving}
-                            onClick={(e) => void saveCourse(e as unknown as React.FormEvent, true)}
-                          >
-                            {courseSaving ? 'Publishing...' : '🚀 Publish Course'}
-                          </Button>
-                        </DialogFooter>
-                      </form>
-                    </DialogContent>
-                  </Dialog>
-                </div>
-
-                {isLoadingCourses ? (
-                  <p className="text-sm text-muted-foreground">Loading courses...</p>
-                ) : filteredCourses.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No courses yet.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {filteredCourses.map((c) => (
-                      <button
-                        key={c._id}
-                        type="button"
-                        onClick={() => navigate(`/modules-page?courseId=${c._id}`)}
-                        className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${
-                          selectedCourseId === c._id
-                            ? 'border-primary bg-primary/5'
-                            : 'border-border hover:border-primary/50'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="font-medium text-foreground truncate">{c.title}</p>
-                            <p className="text-xs text-muted-foreground truncate">
-                              {departments.find((d) => d._id === c.departmentId)?.name || 'Unknown department'}
-                            </p>
-                            <span
-                              className={`inline-block mt-1 text-xs px-2 py-0.5 rounded-full ${
-                                courseStatusClass[normalizeCourseStatus(c.status)]
-                              }`}
-                            >
-                              {courseStatusLabel[normalizeCourseStatus(c.status)]}
-                            </span>
-                            {c.rejectionReason && (
-                              <p className="text-xs text-destructive mt-1 line-clamp-2">
-                                {c.rejectionReason}
-                              </p>
-                            )}
-                          </div>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <MoreHorizontal className="w-4 h-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              {courseIsEditable(c) && (
-                                <DropdownMenuItem onClick={() => openEditCourse(c)}>
-                                  <Edit className="w-4 h-4 mr-2" /> Edit
-                                </DropdownMenuItem>
-                              )}
-                              <DropdownMenuItem onClick={() => navigate(`/modules-page?courseId=${c._id}`)}>
-                                <BookOpen className="w-4 h-4 mr-2" /> Manage Modules
-                              </DropdownMenuItem>
-                              {isAdmin && normalizeCourseStatus(c.status) !== 'PUBLISHED' && (
-                                <DropdownMenuItem onClick={() => void setCourseStatus(c, 'publish')}>
-                                  Publish Course
-                                </DropdownMenuItem>
-                              )}
-                              {isAdmin && normalizeCourseStatus(c.status) === 'PUBLISHED' && (
-                                <DropdownMenuItem onClick={() => void setCourseStatus(c, 'draft')}>
-                                  Save as Draft
-                                </DropdownMenuItem>
-                              )}
-                              {isSupervisor &&
-                                (normalizeCourseStatus(c.status) === 'DRAFT' ||
-                                  normalizeCourseStatus(c.status) === 'REJECTED') && (
-                                  <DropdownMenuItem onClick={() => void submitForApproval(c)}>
-                                    Submit to Admin for Approval
-                                  </DropdownMenuItem>
-                                )}
-                              {courseIsEditable(c) && (
-                              <DropdownMenuItem className="text-destructive" onClick={() => deleteCourse(c)}>
-                                <Trash2 className="w-4 h-4 mr-2" /> Delete
-                              </DropdownMenuItem>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Modules for selected course */}
-              <div className="healthcare-card">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="text-lg font-semibold text-foreground">Modules</h3>
-                    <p className="text-sm text-muted-foreground">
-                      {selectedCourse ? `Course: ${selectedCourse.title}` : 'Select a course to manage modules'}
-                    </p>
-                  </div>
-                  <Dialog open={isModuleDialogOpen} onOpenChange={setIsModuleDialogOpen}>
-                    <DialogTrigger asChild>
-                      <Button onClick={openCreateModule} disabled={!selectedCourseId}>
-                        <Plus className="w-4 h-4 mr-2" />
-                        Add Module
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>
-                          {editingModule ? 'Edit Module' : 'Create Module'}
-                        </DialogTitle>
-                        <DialogDescription>
-                          Modules belong to a course and can be reordered.
-                        </DialogDescription>
-                      </DialogHeader>
-                      <form onSubmit={saveModule} className="space-y-4 py-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="module-title">Module Title</Label>
-                          <Input
-                            id="module-title"
-                            value={moduleTitle}
-                            onChange={(e) => setModuleTitle(e.target.value)}
-                            required
-                          />
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          <div className="space-y-2">
-                            <Label htmlFor="module-role">Target Role</Label>
-                            <Input
-                              id="module-role"
-                              value={moduleTargetRole}
-                              onChange={(e) => setModuleTargetRole(e.target.value)}
-                              placeholder="e.g., Staff Nurse"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="module-duration">Estimated Duration</Label>
-                            <Input
-                              id="module-duration"
-                              value={moduleEstimatedDuration}
-                              onChange={(e) => setModuleEstimatedDuration(e.target.value)}
-                              placeholder="e.g., 45 mins"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="module-objectives">Learning Objectives</Label>
-                            <Input
-                              id="module-objectives"
-                              value={moduleLearningObjectives}
-                              onChange={(e) => setModuleLearningObjectives(e.target.value)}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="module-mode">Mode</Label>
-                            <Input
-                              id="module-mode"
-                              value={moduleMode}
-                              onChange={(e) => setModuleMode(e.target.value)}
-                              placeholder="Online / Blended"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="module-language">Language</Label>
-                            <Input
-                              id="module-language"
-                              value={moduleLanguage}
-                              onChange={(e) => setModuleLanguage(e.target.value)}
-                              placeholder="English"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="module-certification">Certification</Label>
-                            <Input
-                              id="module-certification"
-                              value={moduleCertification}
-                              onChange={(e) => setModuleCertification(e.target.value)}
-                              placeholder="Optional"
-                            />
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="module-content-file">
-                            Upload Course Content (PDF, Video, SCORM, Text, MP4)
-                          </Label>
-                          <Input
-                            id="module-content-file"
-                            type="file"
-                            accept=".pdf,.txt,.zip,.scorm,video/*"
-                            onChange={(e) => setModuleContentFile(e.target.files?.[0] ?? null)}
-                          />
-                        </div>
-
-                        {moduleError && (
-                          <p className="text-sm text-destructive">{moduleError}</p>
-                        )}
-
-                        <DialogFooter>
-                          <Button type="button" variant="outline" onClick={() => setIsModuleDialogOpen(false)}>
-                            Cancel
-                          </Button>
-                          <Button type="submit" disabled={moduleSaving}>
-                            {moduleSaving ? 'Saving...' : editingModule ? 'Save Changes' : 'Create Module'}
-                          </Button>
-                        </DialogFooter>
-                      </form>
-                    </DialogContent>
-                  </Dialog>
-                </div>
-
-                {!selectedCourseId ? (
-                  <p className="text-sm text-muted-foreground">Choose a course from the left.</p>
-                ) : isLoadingModules ? (
-                  <p className="text-sm text-muted-foreground">Loading modules...</p>
-                ) : modules.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No modules yet.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {modules
-                      .slice()
-                      .sort((a, b) => a.order - b.order)
-                      .map((m, idx, arr) => (
-                        <div
-                          key={m._id}
-                          className={`flex items-center justify-between gap-2 border rounded-lg px-3 py-2 ${
-                            selectedModuleId === m._id
-                              ? 'border-primary bg-primary/5'
-                              : 'border-border'
-                          }`}
-                          onClick={() => setSelectedModuleId(m._id)}
-                        >
-                          <div className="min-w-0">
-                            <p className="font-medium text-foreground truncate">
-                              {m.order}. {m.title}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-8 w-8">
-                                  <MoreHorizontal className="w-4 h-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => openEditModule(m)}>
-                                  <Edit className="w-4 h-4 mr-2" /> Edit
-                                </DropdownMenuItem>
-                                <DropdownMenuItem className="text-destructive" onClick={() => deleteModule(m)}>
-                                  <Trash2 className="w-4 h-4 mr-2" /> Delete
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                )}
-
-                <div className="mt-6 pt-6 border-t border-border">
-                  <p className="text-sm text-muted-foreground">
-                    Use <span className="font-medium text-foreground">Manage Modules</span> on a course to open the dedicated module management page.
-                  </p>
-                </div>
-              </div>
-            </div>
+            {renderCoursesAndModules(false)}
           </TabsContent>
 
           {/* Question Bank Tab */}
           <TabsContent value="questions" className="mt-4 space-y-4">
-            <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-              <div className="relative flex-1 max-w-md">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input placeholder="Search questions..." className="pl-9" />
-              </div>
-              <Button>
-                <Plus className="w-4 h-4 mr-2" />
-                Add Question
-              </Button>
-            </div>
-
-            <div className="healthcare-card overflow-x-auto">
-              <table className="table-healthcare">
-                <thead>
-                  <tr>
-                    <th>Question</th>
-                    <th>Module</th>
-                    <th>Type</th>
-                    <th>Difficulty</th>
-                    <th className="text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {questionBank.map((q) => (
-                    <tr key={q.id}>
-                      <td className="font-medium text-foreground max-w-xs truncate">{q.question}</td>
-                      <td>{q.module}</td>
-                      <td>{q.type}</td>
-                      <td>
-                        <span className={`text-xs font-medium px-2 py-1 rounded-full ${
-                          q.difficulty === 'Easy' ? 'bg-success/10 text-success' :
-                          q.difficulty === 'Medium' ? 'bg-warning/10 text-warning' :
-                          'bg-destructive/10 text-destructive'
-                        }`}>
-                          {q.difficulty}
-                        </span>
-                      </td>
-                      <td className="text-right">
-                        <Button variant="ghost" size="sm">Edit</Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            {renderQuestionBank()}
           </TabsContent>
         </Tabs>
       </div>

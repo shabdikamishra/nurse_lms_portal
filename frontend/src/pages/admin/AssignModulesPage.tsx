@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,8 @@ const API_BASE_URL =
 
 export default function AssignModulesPage() {
   const { authHeaders } = useAuth();
+  const [searchParams] = useSearchParams();
+  const preselectedNurseId = searchParams.get("nurseId");
   const [departments, setDepartments] = useState<any[]>([]);
   const [courses, setCourses] = useState<any[]>([]);
   const [modules, setModules] = useState<any[]>([]);
@@ -47,6 +50,12 @@ export default function AssignModulesPage() {
   useEffect(() => {
     void loadBase();
   }, []);
+
+  useEffect(() => {
+    if (preselectedNurseId && nurses.some((n) => n._id === preselectedNurseId)) {
+      setSelectedNurseIds([preselectedNurseId]);
+    }
+  }, [preselectedNurseId, nurses]);
 
   useEffect(() => {
     const loadModules = async () => {

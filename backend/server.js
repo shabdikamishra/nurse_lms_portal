@@ -4,6 +4,8 @@ import morgan from "morgan";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 import multer from "multer";
+import { ChromaClient } from "chromadb";
+import ollama from "ollama";
 import { buildModuleRoutes } from "./routes/moduleRoutes.js";
 import {
   isCoursePublished,
@@ -49,6 +51,13 @@ import {
 dotenv.config();
 
 const app = express();
+
+// Initialize ChromaDB connection client
+const chromaRagClient = new ChromaClient({ 
+  host: "127.0.0.1", 
+  port: 8000 
+});
+
 const PORT = process.env.PORT || 4000;
 const MONGO_URI =
   process.env.MONGO_URI || "mongodb://127.0.0.1:27017/nurse_lms_files";
@@ -3137,6 +3146,66 @@ app.use((err, req, res, next) => {
   console.error("Unexpected error", err);
   res.status(500).json({ message: "Internal server error" });
 });
+
+
+// --- NURSE LMS CUSTOM RAG CHATBOT ROUTE ---
+app.post("/api/chat/rag", async (req, res) => {
+  try {
+    const { message } = req.body;
+    if (!message) return res.status(400).json({ error: "Missing message query" });
+
+    // 1. Convert user's question into an embedding vector
+    const queryEmbed = await ollama.embed({
+      model: "nomic-embed-text",
+      input: message,
+    });
+
+    const embeddingVector = queryEmbed.embeddings;
+
+    // 2. Fetch closest matching chunks from ChromaDB
+    const collection = await chromaRagClient.getCollection({ 
+      name: "nurse_lms_docs",
+      embeddingFunction: null
+    });
+    
+    const queryResults = await collection.query({
+      queryEmbeddings: [embeddingVector],
+      nResults: 2,
+    });
+
+    const matchingDocs = queryResults.documents?.[0] || [];
+    const contextText = matchingDocs.length > 0 
+      ? matchingDocs.join("\n\n") 
+      : "No clinical guidelines available for this topic.";
+
+    // 3. Assemble the prompt constraint
+    const systemPrompt = `You are a clinical training assistant for Nurse LMS. 
+Answer the user's question accurately using ONLY the retrieved context below. 
+If you don't know the answer based on the context, say exactly: 'I cannot find that in the official manuals.'
+   
+Context:
+${contextText}`;
+
+    // 4. Query local LLM
+    const response = await ollama.chat({
+      model: "llama3.2",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: message },
+      ],
+    });
+
+    // 5. Send clean response containing formatting citations back to frontend
+    const standardSources = queryResults.metadatas?.[0] || [];
+    res.json({
+      answer: response.message.content,
+      sources: standardSources,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+// --- END OF RAG ROUTE ---
 
 async function start() {
   try {

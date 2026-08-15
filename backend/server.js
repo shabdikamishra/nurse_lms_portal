@@ -3157,10 +3157,10 @@ app.post("/api/chat/rag", async (req, res) => {
     // 1. Convert user's question into an embedding vector
     const queryEmbed = await ollama.embed({
       model: "nomic-embed-text",
-      input: message,
+      input: `search_query: ${message}`,
     });
 
-    const embeddingVector = queryEmbed.embeddings;
+    const embeddingVector = queryEmbed.embeddings[0];
 
     // 2. Fetch closest matching chunks from ChromaDB
     const collection = await chromaRagClient.getCollection({ 
@@ -3173,7 +3173,9 @@ app.post("/api/chat/rag", async (req, res) => {
       nResults: 2,
     });
 
-    const matchingDocs = queryResults.documents?.[0] || [];
+     // FIX: Safely unpack the 2D array using bracket array indices [0]
+    const matchingDocs = queryResults.documents && queryResults.documents[0] ? queryResults.documents[0] : [];
+    
     const contextText = matchingDocs.length > 0 
       ? matchingDocs.join("\n\n") 
       : "No clinical guidelines available for this topic.";
@@ -3196,7 +3198,8 @@ ${contextText}`;
     });
 
     // 5. Send clean response containing formatting citations back to frontend
-    const standardSources = queryResults.metadatas?.[0] || [];
+    const standardSources = queryResults.metadatas && queryResults.metadatas[0] ? queryResults.metadatas[0] : [];
+    
     res.json({
       answer: response.message.content,
       sources: standardSources,

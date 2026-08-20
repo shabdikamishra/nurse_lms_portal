@@ -133,7 +133,7 @@ const moduleContentUpload = multer({
 // Allow all local dev origins and handle CORS automatically
 app.use(
   cors({
-    origin: true, // reflect the request origin
+    origin: ['https://nurse-lms-portal.vercel.app', 'http://localhost:5173'], // keep local Vite dev server for testing 
     credentials: true,
   })
 );
